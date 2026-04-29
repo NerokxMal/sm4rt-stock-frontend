@@ -1,0 +1,135 @@
+---
+// Todo lo que está entre los --- corre en el SERVIDOR cuando alguien
+// visita la página. El navegador nunca ve este código — solo ve el HTML
+// resultante. Esto es muy diferente al JavaScript del frontend anterior
+// donde todo corría en el navegador del usuario.
+
+import Layout from '../layouts/Layout.astro';
+import { productosAPI, categoriasAPI } from '../lib/api';
+
+// Hacemos las dos peticiones AL MISMO TIEMPO con Promise.all.
+// Si las hiciéramos una tras otra, esperaríamos el doble.
+// Promise.all dice: "lanza ambas peticiones y espera a que las DOS terminen".
+const [productos, categorias] = await Promise.all([
+	productosAPI.obtenerTodos(),
+	categoriasAPI.obtenerTodas(),
+]);
+
+// Calculamos las métricas aquí en el servidor.
+// El navegador recibe números ya calculados, no datos crudos.
+const totalProductos = productos.length;
+const totalCategorias = categorias.length;
+const totalValor = productos.reduce((suma, p) => suma + (p.precio * p.stock), 0);
+// reduce() recorre el array acumulando un valor.
+// Empieza en 0 y por cada producto suma precio * stock.
+
+const stockBajo = productos.filter(p => p.stock < 5).length;
+// filter() devuelve solo los elementos que cumplen la condición.
+// .length cuenta cuántos quedaron.
+
+// Formateamos la moneda en el servidor también.
+const formatCOP = (valor: number) =>
+	new Intl.NumberFormat('es-CO', {
+		style: 'currency',
+		currency: 'COP',
+		minimumFractionDigits: 0,
+	}).format(valor);
+
+// Tomamos los 5 productos con menos stock para mostrar una alerta visual.
+const productosStockBajo = productos
+	.filter(p => p.stock < 5)
+	.sort((a, b) => a.stock - b.stock) // ordena de menor a mayor stock
+	.slice(0, 5); // toma los primeros 5
+---
+
+<!--
+  Aquí empieza el HTML. Pasamos title y activePage al Layout
+  para que sepa qué título mostrar y qué link resaltar en el sidebar.
+-->
+<Layout title="Dashboard" activePage="dashboard">
+
+	<div class="cards-grid">
+		<div class="card">
+			<p class="card-label">Total Productos</p>
+			<p class="card-value">{totalProductos}</p>
+		</div>
+		<div class="card">
+			<p class="card-label">Valor del Inventario</p>
+			<p class="card-value" style="font-size: 24px">{formatCOP(totalValor)}</p>
+		</div>
+		<div class="card">
+			<p class="card-label">Stock Bajo</p>
+			<!--
+              Usamos una expresión ternaria para cambiar la clase según el valor.
+              Si stockBajo > 0 → clase "danger" (color naranja/rojo)
+              Si stockBajo = 0 → clase normal
+            -->
+			<p class={`card-value ${stockBajo > 0 ? 'danger' : ''}`}>{stockBajo}</p>
+		</div>
+		<div class="card">
+			<p class="card-label">Categorías</p>
+			<p class="card-value">{totalCategorias}</p>
+		</div>
+	</div>
+
+	<!--
+      Esta sección solo aparece si hay productos con stock bajo.
+      El operador && en JSX/Astro significa "si esto es verdadero, renderiza lo siguiente".
+    -->
+	{productosStockBajo.length > 0 && (
+		<div class="stock-alert-section">
+			<h2 class="section-title">⚠ Productos con stock crítico</h2>
+			<div class="table-wrapper">
+				<table>
+					<thead>
+					<tr>
+						<th>Producto</th>
+						<th>Categoría</th>
+						<th>Stock</th>
+					</tr>
+					</thead>
+					<tbody>
+					<!--
+                      .map() en Astro funciona igual que en React:
+                      recorre el array y devuelve HTML por cada elemento.
+                      La "key" no es necesaria en Astro como en React.
+                    -->
+					{productosStockBajo.map(p => (
+						<tr>
+							<td>{p.nombre}</td>
+							<td>{p.categoria?.nombre ?? 'Sin categoría'}</td>
+							<!--
+                              ?. es "optional chaining" — accede a .nombre solo si
+                              p.categoria no es null. Si es null, devuelve undefined.
+                              ?? es "nullish coalescing" — si lo anterior es null o
+                              undefined, usa el valor de la derecha.
+                            -->
+							<td><span class="stock-low">{p.stock}</span></td>
+						</tr>
+					))}
+					</tbody>
+				</table>
+			</div>
+		</div>
+	)}
+
+</Layout>
+
+<style>
+	/* Los estilos aquí son "scoped" — solo aplican a esta página.
+       No afectan otros componentes aunque usen las mismas clases. */
+
+	.section-title {
+		font-family: var(--font-mono);
+		font-size: 13px;
+		font-weight: 700;
+		letter-spacing: 0.5px;
+		color: var(--text-muted);
+		text-transform: uppercase;
+		margin-bottom: 16px;
+	}
+
+	.stock-alert-section {
+		margin-top: 8px;
+	}
+</style>

@@ -1,0 +1,383 @@
+---
+// La página de login no usa Layout porque tiene su propio diseño.
+// No queremos sidebar ni header aquí.
+---
+
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Login — sm4rt-stock</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet" />
+</head>
+<body>
+
+<div class="login-page">
+
+    <!-- Panel izquierdo: branding -->
+    <div class="brand-panel">
+        <div class="brand-content">
+            <div class="logo">
+                <span class="logo-box">SM</span>
+                <div class="logo-text">
+                    <span class="logo-main">4rt</span>
+                    <span class="logo-sub">stock</span>
+                </div>
+            </div>
+            <p class="brand-tagline">Gestión de inventario<br />simple y eficiente.</p>
+            <div class="brand-dots">
+                <span></span><span></span><span></span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Panel derecho: formulario -->
+    <div class="form-panel">
+        <div class="form-container">
+
+            <div class="form-header">
+                <h1>Bienvenido</h1>
+                <p>Ingresa tus credenciales para continuar</p>
+            </div>
+
+            <!-- Alerta de error (oculta por defecto) -->
+            <div id="alert" class="alert alert-error" style="display:none;"></div>
+
+            <form id="login-form" class="form">
+                <div class="form-group">
+                    <label for="username">Usuario</label>
+                    <input
+                            type="text"
+                            id="username"
+                            placeholder="tu_usuario"
+                            autocomplete="username"
+                            required
+                    />
+                </div>
+
+                <div class="form-group">
+                    <label for="password">Contraseña</label>
+                    <input
+                            type="password"
+                            id="password"
+                            placeholder="••••••••"
+                            autocomplete="current-password"
+                            required
+                    />
+                </div>
+
+                <button type="submit" class="btn-submit" id="btn-submit">
+                    Ingresar
+                </button>
+            </form>
+
+        </div>
+    </div>
+
+</div>
+
+</body>
+</html>
+
+<script>
+    const form     = document.getElementById('login-form') as HTMLFormElement;
+    const alertEl  = document.getElementById('alert') as HTMLDivElement;
+    const btnSubmit = document.getElementById('btn-submit') as HTMLButtonElement;
+
+    form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+
+        const username = (document.getElementById('username') as HTMLInputElement).value;
+        const password = (document.getElementById('password') as HTMLInputElement).value;
+
+        // Deshabilitamos el botón mientras espera la respuesta
+        // para evitar doble envío accidental.
+        btnSubmit.disabled = true;
+        btnSubmit.textContent = 'Ingresando...';
+
+        try {
+            const response = await fetch('http://localhost:8080/auth/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password }),
+            });
+
+            if (!response.ok) {
+                // El backend devolvió un error (401, 400, etc.)
+                const data = await response.json();
+                throw new Error(data.error ?? 'Credenciales incorrectas');
+            }
+
+            const { token } = await response.json();
+
+            // Guardamos el token en DOS lugares:
+            //
+            // 1. localStorage → para que el JS del navegador lo use
+            //    en los fetch de crear/editar/eliminar
+            localStorage.setItem('token', token);
+
+            // 2. Cookie → para que el middleware del servidor lo lea
+            //    y sepa que el usuario está autenticado en cada página.
+            //    expires= le da 24 horas de vida (igual que el JWT).
+            //    path=/ hace que la cookie aplique a todas las rutas.
+            const expires = new Date(Date.now() + 86400000).toUTCString();
+            document.cookie = `token=${token}; expires=${expires}; path=/`;
+
+            // Redirigimos al dashboard
+            window.location.href = '/';
+
+        } catch (err) {
+            // Mostramos el error y rehabilitamos el botón
+            alertEl.textContent = err instanceof Error ? err.message : 'Error al iniciar sesión';
+            alertEl.style.display = 'block';
+
+            btnSubmit.disabled = false;
+            btnSubmit.textContent = 'Ingresar';
+        }
+    });
+</script>
+
+<style>
+    *, *::before, *::after {
+        margin: 0; padding: 0; box-sizing: border-box;
+    }
+
+    :root {
+        --primary:      #D84910;
+        --primary-light:#FF6B35;
+        --dark:         #111111;
+        --light:        #F5F2EE;
+        --border:       #E0DDD8;
+        --text-muted:   #888880;
+        --error:        #C62828;
+        --error-bg:     #FFEBEE;
+        --font-mono:    'Space Mono', monospace;
+        --font-sans:    'DM Sans', sans-serif;
+        --radius:       6px;
+        --primary-dim:  rgba(216, 73, 16, 0.12);
+    }
+
+    body {
+        font-family: var(--font-sans);
+        height: 100vh;
+        overflow: hidden;
+    }
+
+    /* ─── LAYOUT DOS PANELES ──────────────────────────────────── */
+
+    .login-page {
+        display: grid;
+        grid-template-columns: 1fr 1fr; /* dos columnas iguales */
+        height: 100vh;
+    }
+
+    /* ─── PANEL IZQUIERDO ─────────────────────────────────────── */
+
+    .brand-panel {
+        background: var(--dark);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 48px;
+        position: relative;
+        overflow: hidden;
+    }
+
+    /* Círculo decorativo de fondo */
+    .brand-panel::before {
+        content: '';
+        position: absolute;
+        width: 400px;
+        height: 400px;
+        border-radius: 50%;
+        background: var(--primary);
+        opacity: 0.06;
+        bottom: -100px;
+        right: -100px;
+    }
+
+    .brand-content {
+        position: relative;
+        z-index: 1;
+    }
+
+    .logo {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 48px;
+    }
+
+    .logo-box {
+        background: var(--primary);
+        color: white;
+        font-family: var(--font-mono);
+        font-weight: 700;
+        font-size: 14px;
+        width: 44px;
+        height: 44px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 6px;
+        letter-spacing: 1px;
+    }
+
+    .logo-text {
+        display: flex;
+        flex-direction: column;
+        line-height: 1.1;
+    }
+
+    .logo-main {
+        font-family: var(--font-mono);
+        font-size: 22px;
+        font-weight: 700;
+        color: white;
+    }
+
+    .logo-sub {
+        font-size: 11px;
+        color: var(--primary);
+        letter-spacing: 3px;
+        text-transform: uppercase;
+        font-weight: 500;
+    }
+
+    .brand-tagline {
+        font-size: 28px;
+        font-weight: 300;
+        color: white;
+        line-height: 1.4;
+        margin-bottom: 48px;
+        opacity: 0.9;
+    }
+
+    .brand-dots {
+        display: flex;
+        gap: 8px;
+    }
+
+    .brand-dots span {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--primary);
+        opacity: 0.5;
+    }
+
+    .brand-dots span:first-child { opacity: 1; }
+
+    /* ─── PANEL DERECHO ───────────────────────────────────────── */
+
+    .form-panel {
+        background: var(--light);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 48px;
+    }
+
+    .form-container {
+        width: 100%;
+        max-width: 360px;
+    }
+
+    .form-header {
+        margin-bottom: 36px;
+    }
+
+    .form-header h1 {
+        font-family: var(--font-mono);
+        font-size: 28px;
+        font-weight: 700;
+        color: var(--dark);
+        margin-bottom: 8px;
+    }
+
+    .form-header p {
+        color: var(--text-muted);
+        font-size: 15px;
+    }
+
+    /* ─── FORMULARIO ──────────────────────────────────────────── */
+
+    .form { display: flex; flex-direction: column; gap: 20px; }
+
+    .form-group { display: flex; flex-direction: column; gap: 8px; }
+
+    label {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--dark);
+        letter-spacing: 0.3px;
+    }
+
+    input {
+        padding: 12px 16px;
+        border: 1.5px solid var(--border);
+        border-radius: var(--radius);
+        font-family: var(--font-sans);
+        font-size: 15px;
+        color: var(--dark);
+        background: white;
+        transition: border-color 0.15s, box-shadow 0.15s;
+    }
+
+    input:focus {
+        outline: none;
+        border-color: var(--primary);
+        box-shadow: 0 0 0 3px var(--primary-dim);
+    }
+
+    input::placeholder { color: #bbb; }
+
+    .btn-submit {
+        margin-top: 8px;
+        padding: 13px;
+        background: var(--primary);
+        color: white;
+        border: none;
+        border-radius: var(--radius);
+        font-family: var(--font-sans);
+        font-size: 15px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: background 0.15s;
+        letter-spacing: 0.3px;
+    }
+
+    .btn-submit:hover:not(:disabled) { background: var(--primary-light); }
+
+    .btn-submit:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+    }
+
+    /* ─── ALERTA ──────────────────────────────────────────────── */
+
+    .alert {
+        padding: 12px 16px;
+        border-radius: var(--radius);
+        font-size: 14px;
+        font-weight: 500;
+        margin-bottom: 4px;
+    }
+
+    .alert-error {
+        background: var(--error-bg);
+        color: var(--error);
+        border: 1px solid #FFCDD2;
+    }
+
+    /* ─── RESPONSIVE ──────────────────────────────────────────── */
+
+    @media (max-width: 768px) {
+        .login-page { grid-template-columns: 1fr; }
+        .brand-panel { display: none; } /* ocultamos el branding en móvil */
+        .form-panel { padding: 32px 24px; }
+    }
+</style>

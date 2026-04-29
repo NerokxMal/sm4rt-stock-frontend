@@ -1,0 +1,424 @@
+---
+import Layout from '../layouts/Layout.astro';
+import { productosAPI, categoriasAPI } from '../lib/api';
+
+// Cargamos productos Y categorías en el servidor.
+// Las categorías las necesitamos para el selector del formulario.
+const [productos, categorias] = await Promise.all([
+    productosAPI.obtenerTodos(),
+    categoriasAPI.obtenerTodas(),
+]);
+
+// Convertimos a JSON para pasarlos al <script> del navegador.
+// El servidor genera el HTML con los datos, pero el modal necesita
+// acceder a estos datos desde JavaScript del lado cliente.
+// JSON.stringify convierte el array a texto para incrustarlo en el HTML.
+const productosJSON = JSON.stringify(productos);
+const categoriasJSON = JSON.stringify(categorias);
+---
+
+<Layout title="Productos" activePage="productos">
+
+    <!-- slot "actions": este botón aparece en el header del Layout -->
+    <button class="btn btn-primary" id="btn-nuevo" slot="actions">
+        + Nuevo producto
+    </button>
+
+    <!-- Alerta de feedback (oculta por defecto, JS la muestra/oculta) -->
+    <div id="alert" class="alert" style="display:none;"></div>
+
+    <div class="table-wrapper">
+        <table>
+            <thead>
+            <tr>
+                <th>ID</th>
+                <th>Nombre</th>
+                <th>Categoría</th>
+                <th>Precio</th>
+                <th>Stock</th>
+                <th>Acciones</th>
+            </tr>
+            </thead>
+            <tbody>
+            {productos.map(p => (
+                    <tr>
+                        <td>
+                            <span class="id-badge">#{p.id}</span>
+                        </td>
+                        <td>
+                            <strong>{p.nombre}</strong>
+                            {p.descripcion && <p class="desc">{p.descripcion}</p>}
+                        </td>
+                        <td>{p.categoria?.nombre ?? <span class="muted">Sin categoría</span>}</td>
+                        <td class="mono">
+                            {new Intl.NumberFormat('es-CO', {
+                                style: 'currency',
+                                currency: 'COP',
+                                minimumFractionDigits: 0
+                            }).format(p.precio)}
+                        </td>
+                        <td>
+              <span class={p.stock < 5 ? 'stock-low' : 'stock-ok'}>
+                {p.stock}
+              </span>
+                        </td>
+                        <td>
+                            <div class="actions-cell">
+                                <!--
+                                  data-* son atributos HTML personalizados.
+                                  Guardamos el ID del producto en el botón para que
+                                  cuando el usuario haga click, el JS sepa qué producto editar.
+                                  Es como pegar una etiqueta en cada botón.
+                                -->
+                                <button
+                                        class="btn btn-edit btn-sm"
+                                        data-id={p.id}
+                                        data-action="edit"
+                                >
+                                    Editar
+                                </button>
+                                <button
+                                        class="btn btn-danger btn-sm"
+                                        data-id={p.id}
+                                        data-action="delete"
+                                >
+                                    Eliminar
+                                </button>
+                            </div>
+                        </td>
+                    </tr>
+            ))}
+            </tbody>
+        </table>
+    </div>
+
+</Layout>
+
+<!-- MODAL -->
+<!--
+  El modal vive fuera del Layout porque necesita estar sobre todo el contenido.
+  position: fixed en el CSS lo posiciona relativo a la ventana, no al documento.
+-->
+<div id="modal" class="modal-overlay" style="display:none;">
+    <div class="modal-box">
+        <div class="modal-header">
+            <h2 id="modal-title" class="modal-title">Nuevo Producto</h2>
+            <button id="modal-close" class="modal-close">✕</button>
+        </div>
+
+        <form id="producto-form" class="form">
+            <!-- input hidden para guardar el id cuando editamos -->
+            <input type="hidden" id="producto-id" />
+
+            <div class="form-group">
+                <label for="nombre">Nombre *</label>
+                <input type="text" id="nombre" required />
+            </div>
+
+            <div class="form-group">
+                <label for="descripcion">Descripción</label>
+                <textarea id="descripcion" rows="2"></textarea>
+            </div>
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="precio">Precio *</label>
+                    <input type="number" id="precio" step="0.01" min="0" required />
+                </div>
+                <div class="form-group">
+                    <label for="stock">Stock *</label>
+                    <input type="number" id="stock" min="0" required />
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label for="categoria">Categoría</label>
+                <select id="categoria">
+                    <option value="">Sin categoría</option>
+                    <!--
+                      Generamos las opciones con los datos cargados en el servidor.
+                      Así el selector siempre tiene las categorías actualizadas.
+                    -->
+                    {categorias.map(c => (
+                            <option value={c.id}>{c.nombre}</option>
+                    ))}
+                </select>
+            </div>
+
+            <div class="form-actions">
+                <button type="button" id="btn-cancelar" class="btn">Cancelar</button>
+                <button type="submit" class="btn btn-primary">Guardar</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!--
+  El <script> corre en el NAVEGADOR — no en el servidor.
+  Aquí manejamos toda la interactividad: abrir modal, guardar, eliminar.
+
+  "is:inline" le dice a Astro que no procese este script, lo deje tal cual.
+  Lo usamos para poder leer las variables que inyectamos desde el servidor.
+-->
+<script is:inline define:vars={{ productosJSON, categoriasJSON, apiUrl: import.meta.env.PUBLIC_API_URL ?? 'http://localhost:8080' }}>
+    // define:vars nos permite pasar variables del servidor al script del navegador.
+    // Astro las serializa automáticamente.
+    const productos = JSON.parse(productosJSON);
+    const categorias = JSON.parse(categoriasJSON);
+    // apiUrl ya está disponible porque viene de define:vars
+
+    // ─── REFERENCIAS AL DOM ──────────────────────────────────────
+    // Guardamos referencias a los elementos HTML que vamos a manipular.
+    const modal        = document.getElementById('modal');
+    const modalTitle   = document.getElementById('modal-title');
+    const form         = document.getElementById('producto-form');
+    const alertEl      = document.getElementById('alert');
+    const btnNuevo     = document.getElementById('btn-nuevo');
+    const btnCancelar  = document.getElementById('btn-cancelar');
+    const modalClose   = document.getElementById('modal-close');
+
+    // ─── TOKEN ───────────────────────────────────────────────────
+    // El token JWT lo guardamos en localStorage cuando el usuario hace login.
+    // Por ahora lo leemos de ahí. Si no hay token, las operaciones de
+    // escritura fallarán con 403 — más adelante conectamos la pantalla de login.
+    const token = localStorage.getItem('token') ?? '';
+
+    // ─── ABRIR / CERRAR MODAL ────────────────────────────────────
+    function abrirModal() { modal.style.display = 'flex'; }
+    function cerrarModal() {
+        modal.style.display = 'none';
+        form.reset(); // limpia todos los campos
+        document.getElementById('producto-id').value = '';
+    }
+
+    btnNuevo.addEventListener('click', () => {
+        modalTitle.textContent = 'Nuevo Producto';
+        cerrarModal(); // reset primero
+        abrirModal();
+    });
+
+    btnCancelar.addEventListener('click', cerrarModal);
+    modalClose.addEventListener('click', cerrarModal);
+
+    // Cerrar al hacer click fuera del modal
+    modal.addEventListener('click', (e) => {
+        if (e.target === modal) cerrarModal();
+    });
+
+    // ─── EDITAR ──────────────────────────────────────────────────
+    // Delegación de eventos: en lugar de poner un listener en cada botón,
+    // ponemos UNO en el documento y filtramos por data-action.
+    // Es más eficiente y funciona aunque el DOM cambie dinámicamente.
+    document.addEventListener('click', (e) => {
+        const btn = e.target.closest('[data-action]');
+        if (!btn) return;
+
+        const id = parseInt(btn.dataset.id);
+        const action = btn.dataset.action;
+
+        if (action === 'edit') {
+            // Buscamos el producto en el array que cargamos del servidor
+            const p = productos.find(x => x.id === id);
+            if (!p) return;
+
+            modalTitle.textContent = 'Editar Producto';
+            document.getElementById('producto-id').value = p.id;
+            document.getElementById('nombre').value = p.nombre;
+            document.getElementById('descripcion').value = p.descripcion ?? '';
+            document.getElementById('precio').value = p.precio;
+            document.getElementById('stock').value = p.stock;
+            document.getElementById('categoria').value = p.categoria?.id ?? '';
+
+            abrirModal();
+        }
+
+        if (action === 'delete') {
+            if (!confirm(`¿Eliminar "${btn.closest('tr').querySelector('strong').textContent}"?`)) return;
+            eliminarProducto(id);
+        }
+    });
+
+    // ─── GUARDAR (CREAR O ACTUALIZAR) ────────────────────────────
+    form.addEventListener('submit', async (e) => {
+        e.preventDefault(); // evita que el form recargue la página
+
+        const id = document.getElementById('producto-id').value;
+        const categoriaId = document.getElementById('categoria').value;
+
+        const data = {
+            nombre:      document.getElementById('nombre').value,
+            descripcion: document.getElementById('descripcion').value,
+            precio:      parseFloat(document.getElementById('precio').value),
+            stock:       parseInt(document.getElementById('stock').value),
+            categoria:   categoriaId ? { id: parseInt(categoriaId) } : null,
+        };
+
+        try {
+            if (id) {
+                // Si hay id → es una edición (PUT)
+                await fetch(`${apiUrl}/productos/${id}`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`,
+                    },
+                    body: JSON.stringify(data),
+                });
+                mostrarAlerta('Producto actualizado correctamente', 'success');
+            } else {
+                // Si no hay id → es una creación (POST)
+                await fetch(`${apiUrl}/productos`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`,
+                    },
+                    body: JSON.stringify(data),
+                });
+                mostrarAlerta('Producto creado correctamente', 'success');
+            }
+            cerrarModal();
+            // Recargamos la página para ver los cambios.
+            // En una app más avanzada actualizaríamos solo la tabla sin recargar.
+            setTimeout(() => location.reload(), 800);
+        } catch (err) {
+            mostrarAlerta('Error al guardar el producto', 'error');
+        }
+    });
+
+    // ─── ELIMINAR ────────────────────────────────────────────────
+    async function eliminarProducto(id) {
+        try {
+            await fetch(`${apiUrl}/productos/${id}`, {
+                method: 'DELETE',
+                headers: { 'Authorization': `Bearer ${token}` },
+            });
+            mostrarAlerta('Producto eliminado', 'success');
+            setTimeout(() => location.reload(), 800);
+        } catch (err) {
+            mostrarAlerta('Error al eliminar', 'error');
+        }
+    }
+
+    // ─── ALERTAS ─────────────────────────────────────────────────
+    function mostrarAlerta(mensaje, tipo) {
+        alertEl.textContent = mensaje;
+        alertEl.className = `alert alert-${tipo}`;
+        alertEl.style.display = 'block';
+        setTimeout(() => { alertEl.style.display = 'none'; }, 3000);
+    }
+</script>
+
+<style>
+    .id-badge {
+        font-family: var(--font-mono);
+        font-size: 12px;
+        color: var(--text-muted);
+    }
+
+    .desc {
+        font-size: 12px;
+        color: var(--text-muted);
+        margin-top: 2px;
+    }
+
+    .mono {
+        font-family: var(--font-mono);
+        font-size: 13px;
+    }
+
+    .muted { color: var(--text-muted); }
+
+    /* ─── MODAL ─────────────────────────────────────────────────── */
+
+    .modal-overlay {
+        position: fixed;
+        inset: 0; /* shorthand de top:0 right:0 bottom:0 left:0 */
+        background: rgba(0,0,0,0.5);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 200;
+    }
+
+    .modal-box {
+        background: white;
+        border-radius: var(--radius);
+        width: 90%;
+        max-width: 480px;
+        padding: 28px;
+    }
+
+    .modal-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 24px;
+    }
+
+    .modal-title {
+        font-family: var(--font-mono);
+        font-size: 16px;
+        font-weight: 700;
+    }
+
+    .modal-close {
+        background: none;
+        border: none;
+        font-size: 18px;
+        cursor: pointer;
+        color: var(--text-muted);
+        padding: 4px 8px;
+        border-radius: 4px;
+    }
+
+    .modal-close:hover { background: var(--light); color: var(--text); }
+
+    /* ─── FORMULARIO ─────────────────────────────────────────────── */
+
+    .form { display: flex; flex-direction: column; gap: 16px; }
+
+    .form-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+    }
+
+    .form-group {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+
+    label {
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--text-muted);
+    }
+
+    input, select, textarea {
+        padding: 9px 12px;
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        font-family: var(--font-sans);
+        font-size: 14px;
+        color: var(--text);
+        background: white;
+        transition: border-color 0.15s;
+    }
+
+    input:focus, select:focus, textarea:focus {
+        outline: none;
+        border-color: var(--primary);
+        box-shadow: 0 0 0 3px var(--primary-dim);
+    }
+
+    textarea { resize: vertical; }
+
+    .form-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 10px;
+        margin-top: 8px;
+    }
+</style>
