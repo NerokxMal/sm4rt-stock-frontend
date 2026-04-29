@@ -136,7 +136,7 @@ const categoriasJSON = JSON.stringify(categorias);
 
         try {
             if (id) {
-                await fetch(`http://localhost:8080/categorias/${id}`, {
+                await fetch(`${apiUrl}/categorias/${id}`, {
                     method: 'PUT',
                     headers: {
                         'Content-Type': 'application/json',
