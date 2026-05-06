@@ -93,8 +93,6 @@
         const username = (document.getElementById('username') as HTMLInputElement).value;
         const password = (document.getElementById('password') as HTMLInputElement).value;
 
-        // Deshabilitamos el botón mientras espera la respuesta
-        // para evitar doble envío accidental.
         btnSubmit.disabled = true;
         btnSubmit.textContent = 'Ingresando...';
 
@@ -106,31 +104,26 @@
             });
 
             if (!response.ok) {
-                // El backend devolvió un error (401, 400, etc.)
                 const data = await response.json();
                 throw new Error(data.error ?? 'Credenciales incorrectas');
             }
 
-            const { token } = await response.json();
+            // 1. Desestructuramos el JSON para obtener 'token' y 'role'
+            const { token, role } = await response.json();
 
-            // Guardamos el token en DOS lugares:
-            //
-            // 1. localStorage → para que el JS del navegador lo use
-            //    en los fetch de crear/editar/eliminar
+            // 2. Guardamos AMBOS en localStorage para uso del JS en el navegador
             localStorage.setItem('token', token);
+            localStorage.setItem('role', role); // <-- Nuevo: Guardar el rol
 
-            // 2. Cookie → para que el middleware del servidor lo lea
-            //    y sepa que el usuario está autenticado en cada página.
-            //    expires= le da 24 horas de vida (igual que el JWT).
-            //    path=/ hace que la cookie aplique a todas las rutas.
+            // 3. Guardamos AMBOS en cookies para el middleware del servidor
             const expires = new Date(Date.now() + 86400000).toUTCString();
             document.cookie = `token=${token}; expires=${expires}; path=/`;
+            document.cookie = `role=${role}; expires=${expires}; path=/`; // <-- Nuevo: Guardar cookie de rol
 
             // Redirigimos al dashboard
             window.location.href = '/';
 
         } catch (err) {
-            // Mostramos el error y rehabilitamos el botón
             alertEl.textContent = err instanceof Error ? err.message : 'Error al iniciar sesión';
             alertEl.style.display = 'block';
 

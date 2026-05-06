@@ -1,33 +1,37 @@
 ---
 // Todo lo que está entre los --- corre en el SERVIDOR cuando alguien
 // visita la página. El navegador nunca ve este código — solo ve el HTML
-// resultante. Esto es muy diferente al JavaScript del frontend anterior
-// donde todo corría en el navegador del usuario.
+// resultante.
 
 import Layout from '../layouts/Layout.astro';
-import { productosAPI, categoriasAPI } from '../lib/api';
 
-// Hacemos las dos peticiones AL MISMO TIEMPO con Promise.all.
-// Si las hiciéramos una tras otra, esperaríamos el doble.
-// Promise.all dice: "lanza ambas peticiones y espera a que las DOS terminen".
-const [productos, categorias] = await Promise.all([
-	productosAPI.obtenerTodos(),
-	categoriasAPI.obtenerTodas(),
-]);
+const API_URL = import.meta.env.PUBLIC_API_URL ?? 'http://localhost:8080';
 
-// Calculamos las métricas aquí en el servidor.
-// El navegador recibe números ya calculados, no datos crudos.
-const totalProductos = productos.length;
-const totalCategorias = categorias.length;
-const totalValor = productos.reduce((suma, p) => suma + (p.precio * p.stock), 0);
-// reduce() recorre el array acumulando un valor.
-// Empieza en 0 y por cada producto suma precio * stock.
+// Una sola petición al nuevo endpoint /dashboard/stats reemplaza las dos
+// llamadas separadas a /productos y /categorias que teníamos antes.
+// El backend ya calcula todo — métricas, datos de gráficas y stock crítico.
+let stats = {
+	totalProductos:      0,
+	valorInventario:     0,
+	stockBajo:           0,
+	totalCategorias:     0,
+	porCategoria:        [] as { nombre: string; cantidad: number }[],
+	movimientosPorDia:   [] as { fecha: string; entradas: number; salidas: number }[],
+	productosStockBajo:  [] as { id: number; nombre: string; stock: number; categoria: { nombre: string } | null }[],
+};
 
-const stockBajo = productos.filter(p => p.stock < 5).length;
-// filter() devuelve solo los elementos que cumplen la condición.
-// .length cuenta cuántos quedaron.
+try {
+	const resp = await fetch(`${API_URL}/dashboard/stats`);
+	if (resp.ok) {
+		stats = await resp.json();
+	}
+} catch (e) {
+	// Si el backend no está corriendo, el dashboard renderiza con ceros
+	// en lugar de romper la página completa con un error de build.
+	console.error('No se pudo conectar con el backend:', e);
+}
 
-// Formateamos la moneda en el servidor también.
+// Formateamos la moneda en el servidor — el navegador recibe texto ya formateado.
 const formatCOP = (valor: number) =>
 	new Intl.NumberFormat('es-CO', {
 		style: 'currency',
@@ -35,48 +39,94 @@ const formatCOP = (valor: number) =>
 		minimumFractionDigits: 0,
 	}).format(valor);
 
-// Tomamos los 5 productos con menos stock para mostrar una alerta visual.
-const productosStockBajo = productos
-	.filter(p => p.stock < 5)
-	.sort((a, b) => a.stock - b.stock) // ordena de menor a mayor stock
-	.slice(0, 5); // toma los primeros 5
+// Extraemos los arrays para pasarlos a Chart.js via define:vars.
+// define:vars serializa estos valores y los inyecta como constantes globales
+// en el <script is:inline> — así Chart.js los tiene sin un fetch extra.
+const donutLabels   = stats.porCategoria.map(c => c.nombre);
+const donutData     = stats.porCategoria.map(c => c.cantidad);
+const lineaLabels   = stats.movimientosPorDia.map(m => m.fecha);
+const lineaEntradas = stats.movimientosPorDia.map(m => m.entradas);
+const lineaSalidas  = stats.movimientosPorDia.map(m => m.salidas);
 ---
 
-<!--
-  Aquí empieza el HTML. Pasamos title y activePage al Layout
-  para que sepa qué título mostrar y qué link resaltar en el sidebar.
--->
 <Layout title="Dashboard" activePage="dashboard">
 
+	<!-- ─── TARJETAS DE MÉTRICAS ──────────────────────────────────────
+         Mismas 4 tarjetas que tenías antes, sin cambios visuales.
+    -->
 	<div class="cards-grid">
 		<div class="card">
 			<p class="card-label">Total Productos</p>
-			<p class="card-value">{totalProductos}</p>
+			<p class="card-value">{stats.totalProductos}</p>
 		</div>
 		<div class="card">
 			<p class="card-label">Valor del Inventario</p>
-			<p class="card-value" style="font-size: 24px">{formatCOP(totalValor)}</p>
+			<!--
+                font-size reducido a 22px porque el número en COP es largo
+                (ej: $1.250.000) y desbordaba la tarjeta con 24px.
+            -->
+			<p class="card-value" style="font-size: 22px">
+				{formatCOP(stats.valorInventario)}
+			</p>
 		</div>
 		<div class="card">
 			<p class="card-label">Stock Bajo</p>
 			<!--
-              Usamos una expresión ternaria para cambiar la clase según el valor.
-              Si stockBajo > 0 → clase "danger" (color naranja/rojo)
-              Si stockBajo = 0 → clase normal
+                Ternaria igual que antes:
+                si stockBajo > 0 → clase "danger" (naranja), si no → normal.
             -->
-			<p class={`card-value ${stockBajo > 0 ? 'danger' : ''}`}>{stockBajo}</p>
+			<p class={`card-value ${stats.stockBajo > 0 ? 'danger' : ''}`}>
+				{stats.stockBajo}
+			</p>
 		</div>
 		<div class="card">
 			<p class="card-label">Categorías</p>
-			<p class="card-value">{totalCategorias}</p>
+			<p class="card-value">{stats.totalCategorias}</p>
 		</div>
 	</div>
 
-	<!--
-      Esta sección solo aparece si hay productos con stock bajo.
-      El operador && en JSX/Astro significa "si esto es verdadero, renderiza lo siguiente".
+	<!-- ─── GRÁFICAS ──────────────────────────────────────────────────
+         Sección nueva. Grid de dos columnas:
+         izquierda → donut (distribución por categoría)
+         derecha   → línea de tiempo (movimientos últimos 30 días)
     -->
-	{productosStockBajo.length > 0 && (
+	<div class="charts-grid">
+
+		<!-- Donut -->
+		<div class="chart-card">
+			<p class="chart-title">Productos por categoría</p>
+			{donutData.length === 0
+				? <p class="chart-empty">Sin productos cargados aún.</p>
+				: <div class="chart-container"><canvas id="chart-donut"></canvas></div>
+			}
+		</div>
+
+		<!-- Línea de tiempo -->
+		<div class="chart-card">
+			<p class="chart-title">Movimientos de stock — últimos 30 días</p>
+			{lineaLabels.length === 0
+				? (
+					<p class="chart-empty">
+						Sin movimientos en los últimos 30 días.<br />
+						<span style="font-size:12px">
+                            Los movimientos se registran automáticamente
+                            al editar el stock de un producto.
+                        </span>
+					</p>
+				)
+				: <div class="chart-container"><canvas id="chart-linea"></canvas></div>
+			}
+		</div>
+
+	</div>
+
+	<!-- ─── TABLA DE STOCK CRÍTICO ────────────────────────────────────
+         Igual que antes, pero los datos vienen del backend
+         (productosStockBajo en DashboardStats) en lugar de calcularse
+         aquí con filter() + sort() sobre todos los productos.
+         El operador && hace que la sección no aparezca si la lista está vacía.
+    -->
+	{stats.productosStockBajo.length > 0 && (
 		<div class="stock-alert-section">
 			<h2 class="section-title">⚠ Productos con stock crítico</h2>
 			<div class="table-wrapper">
@@ -89,21 +139,12 @@ const productosStockBajo = productos
 					</tr>
 					</thead>
 					<tbody>
-					<!--
-                      .map() en Astro funciona igual que en React:
-                      recorre el array y devuelve HTML por cada elemento.
-                      La "key" no es necesaria en Astro como en React.
-                    -->
-					{productosStockBajo.map(p => (
+					{stats.productosStockBajo.map(p => (
 						<tr>
 							<td>{p.nombre}</td>
-							<td>{p.categoria?.nombre ?? 'Sin categoría'}</td>
-							<!--
-                              ?. es "optional chaining" — accede a .nombre solo si
-                              p.categoria no es null. Si es null, devuelve undefined.
-                              ?? es "nullish coalescing" — si lo anterior es null o
-                              undefined, usa el valor de la derecha.
-                            -->
+							<td>
+								{p.categoria?.nombre ?? <span class="muted">Sin categoría</span>}
+							</td>
 							<td><span class="stock-low">{p.stock}</span></td>
 						</tr>
 					))}
@@ -115,9 +156,209 @@ const productosStockBajo = productos
 
 </Layout>
 
+<!--
+    is:inline → Astro no procesa este script, lo deja tal cual en el HTML final.
+    define:vars → inyecta las variables del frontmatter como constantes globales
+                  en este script. Es el puente entre el servidor y el cliente.
+
+    Chart.js se carga dinámicamente dentro del script con script.onload para
+    garantizar que Chart esté definido antes de intentar usarlo, independientemente
+    del orden en que el navegador ejecute los scripts en modo SSR de Astro.
+-->
+<script is:inline define:vars={{ donutLabels, donutData, lineaLabels, lineaEntradas, lineaSalidas }}>
+
+	function montarGraficas() {
+		const isDark    = window.matchMedia('(prefers-color-scheme: dark)').matches;
+		const textColor = '#888880';
+		const gridColor = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)';
+
+		const COLORES = [
+			'#D84910',
+			'#1D9E75',
+			'#378ADD',
+			'#BA7517',
+			'#7F77DD',
+			'#D4537E',
+			'#888780',
+		];
+
+		// ─── DONUT ─────────────────────────────────────────────────────
+		const canvasDonut = document.getElementById('chart-donut');
+		if (canvasDonut && donutData.length > 0) {
+			new Chart(canvasDonut.getContext('2d'), {
+				type: 'doughnut',
+				data: {
+					labels: donutLabels,
+					datasets: [{
+						data: donutData,
+						backgroundColor: COLORES.slice(0, donutData.length),
+						borderWidth: 2,
+						borderColor: isDark ? '#1A1A1A' : '#FFFFFF',
+						hoverOffset: 8,
+					}]
+				},
+				options: {
+					responsive: true,
+					maintainAspectRatio: false,
+					cutout: '65%',
+					plugins: {
+						legend: {
+							position: 'bottom',
+							labels: {
+								padding: 16,
+								font: { size: 12, family: "'DM Sans', sans-serif" },
+								color: textColor,
+								usePointStyle: true,
+								pointStyleWidth: 8,
+							}
+						},
+						tooltip: {
+							callbacks: {
+								label: function(ctx) {
+									const total = ctx.dataset.data.reduce((a, b) => a + b, 0);
+									const pct = Math.round((ctx.parsed / total) * 100);
+									return ` ${ctx.label}: ${ctx.parsed} productos (${pct}%)`;
+								}
+							}
+						}
+					}
+				}
+			});
+		}
+
+		// ─── LÍNEA DE TIEMPO ───────────────────────────────────────────
+		const canvasLinea = document.getElementById('chart-linea');
+		if (canvasLinea && lineaLabels.length > 0) {
+			new Chart(canvasLinea.getContext('2d'), {
+				type: 'line',
+				data: {
+					labels: lineaLabels,
+					datasets: [
+						{
+							label: 'Entradas',
+							data: lineaEntradas,
+							borderColor: '#1D9E75',
+							backgroundColor: 'rgba(29,158,117,0.08)',
+							borderWidth: 2,
+							tension: 0.3,
+							fill: true,
+							pointRadius: 3,
+							pointHoverRadius: 5,
+							pointBackgroundColor: '#1D9E75',
+						},
+						{
+							label: 'Salidas',
+							data: lineaSalidas,
+							borderColor: '#D84910',
+							backgroundColor: 'rgba(216,73,16,0.08)',
+							borderWidth: 2,
+							tension: 0.3,
+							fill: true,
+							pointRadius: 3,
+							pointHoverRadius: 5,
+							pointBackgroundColor: '#D84910',
+						}
+					]
+				},
+				options: {
+					responsive: true,
+					maintainAspectRatio: false,
+					interaction: { mode: 'index', intersect: false },
+					scales: {
+						y: {
+							beginAtZero: true,
+							grid: { color: gridColor },
+							border: { display: false },
+							ticks: {
+								font: { size: 11, family: "'DM Sans', sans-serif" },
+								color: textColor,
+								callback: (val) => Number.isInteger(val) ? val : null,
+							}
+						},
+						x: {
+							grid: { display: false },
+							border: { display: false },
+							ticks: {
+								font: { size: 11, family: "'DM Sans', sans-serif" },
+								color: textColor,
+								maxTicksLimit: 15,
+							}
+						}
+					},
+					plugins: {
+						legend: {
+							position: 'bottom',
+							labels: {
+								padding: 16,
+								font: { size: 12, family: "'DM Sans', sans-serif" },
+								color: textColor,
+								usePointStyle: true,
+								pointStyleWidth: 8,
+							}
+						}
+					}
+				}
+			});
+		}
+	}
+
+	// Carga Chart.js dinámicamente y espera a que esté listo antes de usarlo.
+	// script.onload garantiza que Chart esté definido cuando se llame montarGraficas(),
+	// sin importar el orden en que el navegador procese los scripts.
+	if (typeof Chart === 'undefined') {
+		const script = document.createElement('script');
+		script.src = 'https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js';
+		script.onload = montarGraficas;
+		document.head.appendChild(script);
+	} else {
+		montarGraficas();
+	}
+</script>
+
 <style>
-	/* Los estilos aquí son "scoped" — solo aplican a esta página.
-       No afectan otros componentes aunque usen las mismas clases. */
+	/* Los estilos son "scoped" en Astro — solo aplican a esta página */
+
+	/* ─── GRÁFICAS ────────────────────────────────────────────────── */
+
+	.charts-grid {
+		display: grid;
+		grid-template-columns: 1fr 2fr;
+		gap: 20px;
+		margin-top: 8px;
+	}
+
+	.chart-card {
+		background: white;
+		border: 1px solid var(--border);
+		border-radius: var(--radius);
+		padding: 24px;
+	}
+
+	.chart-title {
+		font-family: var(--font-mono);
+		font-size: 10px;
+		font-weight: 700;
+		letter-spacing: 1.5px;
+		text-transform: uppercase;
+		color: var(--text-muted);
+		margin-bottom: 16px;
+	}
+
+	/* Altura fija para que Chart.js con maintainAspectRatio: false la respete */
+	.chart-container {
+		position: relative;
+		height: 260px;
+	}
+
+	.chart-empty {
+		color: var(--text-muted);
+		font-size: 13px;
+		line-height: 1.7;
+		padding: 48px 0;
+		text-align: center;
+	}
+
+	/* ─── TABLA STOCK CRÍTICO ─────────────────────────────────────── */
 
 	.section-title {
 		font-family: var(--font-mono);
@@ -130,6 +371,16 @@ const productosStockBajo = productos
 	}
 
 	.stock-alert-section {
-		margin-top: 8px;
+		margin-top: 20px;
+	}
+
+	.muted { color: var(--text-muted); }
+
+	/* ─── RESPONSIVE ──────────────────────────────────────────────── */
+
+	@media (max-width: 900px) {
+		.charts-grid {
+			grid-template-columns: 1fr;
+		}
 	}
 </style>
