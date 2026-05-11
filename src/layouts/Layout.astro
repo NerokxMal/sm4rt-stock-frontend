@@ -1,13 +1,36 @@
 ---
-// Props que cada página puede pasarle al layout.
-// "title" es obligatorio, "activePage" sirve para resaltar
-// el link activo en el sidebar.
+import { hasPermission, parsePermissions } from '../lib/session';
+
 interface Props {
     title: string;
     activePage: 'dashboard' | 'productos' | 'categorias' | 'historico' | 'configuracion';
 }
 
 const { title, activePage } = Astro.props;
+const API_URL = import.meta.env.PUBLIC_API_URL ?? 'http://localhost:8080';
+const role = Astro.cookies.get('role')?.value;
+const token = Astro.cookies.get('token')?.value;
+const permissions = parsePermissions(Astro.cookies.get('permissions')?.value, role);
+
+const canViewDashboard = hasPermission(permissions, 'DASHBOARD_VIEW');
+const canViewProducts = hasPermission(permissions, 'PRODUCT_VIEW');
+const canViewCategories = hasPermission(permissions, 'CATEGORY_VIEW');
+const canViewHistory = hasPermission(permissions, 'HISTORY_VIEW');
+const canSearch = canViewProducts || canViewCategories || canViewHistory;
+
+let stockCriticoCount = 0;
+if (token && canViewProducts) {
+    try {
+        const resp = await fetch(`${API_URL}/productos/stock-critico/count`, {
+            headers: { Authorization: `Bearer ${token}` }
+        });
+        if (resp.ok) {
+            stockCriticoCount = await resp.json();
+        }
+    } catch {
+        stockCriticoCount = 0;
+    }
+}
 ---
 
 <!DOCTYPE html>
@@ -23,7 +46,6 @@ const { title, activePage } = Astro.props;
 <body>
 <div class="app">
 
-    <!-- SIDEBAR -->
     <aside class="sidebar">
         <div class="logo">
             <span class="logo-box">SM</span>
@@ -34,75 +56,161 @@ const { title, activePage } = Astro.props;
         </div>
 
         <nav class="nav">
-            <!-- El truco: comparamos activePage con el nombre de cada sección.
-                 Si coincide, agregamos la clase "active" que lo resalta. -->
-            <a href="/" class={`nav-link ${activePage === 'dashboard' ? 'active' : ''}`}>
-                <span class="nav-icon">◈</span>
-                <span>Dashboard</span>
-            </a>
-            <a href="/productos" class={`nav-link ${activePage === 'productos' ? 'active' : ''}`}>
-                <span class="nav-icon">▦</span>
-                <span>Productos</span>
-            </a>
-            <a href="/categorias" class={`nav-link ${activePage === 'categorias' ? 'active' : ''}`}>
-                <span class="nav-icon">◉</span>
-                <span>Categorías</span>
-            </a>
-            <a href="/historico" class={`nav-link ${activePage === 'historico' ? 'active' : ''}`}>
-                <span class="nav-icon">◎</span>
-                <span>Histórico</span>
-            </a>
-            <!-- Solo visible para ADMIN — leer la cookie de rol: -->
-            {Astro.cookies.get('role')?.value === 'ADMIN' && (
+            {canViewDashboard && (
+                <a href="/" class={`nav-link ${activePage === 'dashboard' ? 'active' : ''}`}>
+                    <span class="nav-icon">◈</span>
+                    <span>Dashboard</span>
+                </a>
+            )}
+            {canViewProducts && (
+                <a href="/productos" class={`nav-link ${activePage === 'productos' ? 'active' : ''}`}>
+                    <span class="nav-icon">▦</span>
+                    <span>Productos</span>
+                    {stockCriticoCount > 0 && <span class="critical-badge">{stockCriticoCount}</span>}
+                </a>
+            )}
+            {canViewCategories && (
+                <a href="/categorias" class={`nav-link ${activePage === 'categorias' ? 'active' : ''}`}>
+                    <span class="nav-icon">◉</span>
+                    <span>Categorías</span>
+                </a>
+            )}
+            {canViewHistory && (
+                <a href="/historico" class={`nav-link ${activePage === 'historico' ? 'active' : ''}`}>
+                    <span class="nav-icon">◎</span>
+                    <span>Histórico</span>
+                </a>
+            )}
+            {role === 'ADMIN' && (
                 <a href="/configuracion" class={`nav-link ${activePage === 'configuracion' ? 'active' : ''}`}>
                     <span class="nav-icon">⚙</span>
                     <span>Configuración</span>
                 </a>
-                )}
+            )}
         </nav>
 
         <div class="sidebar-footer">
             <button id="btn-logout" class="btn-logout">
                 ⎋ Cerrar sesión
             </button>
-            <span class="version">v2.0</span>
+            <span class="version">v3.0</span>
         </div>
     </aside>
 
-    <!-- CONTENIDO PRINCIPAL -->
     <main class="main">
         <header class="page-header">
             <h1 class="page-title">{title}</h1>
-            <!-- slot nombrado: las páginas pueden inyectar botones aquí -->
             <div class="header-actions">
+                {canSearch && (
+                    <div class="search-box">
+                        <input id="global-search" type="search" placeholder="Buscar..." autocomplete="off" />
+                        <div id="search-results" class="search-results" style="display:none;"></div>
+                    </div>
+                )}
                 <slot name="actions" />
             </div>
         </header>
 
-        <!-- slot principal: aquí va el contenido de cada página -->
         <div class="page-content">
             <slot />
         </div>
     </main>
 
 </div>
-<script>
+<script define:vars={{ apiUrl: API_URL, canSearch }}>
+    const token = localStorage.getItem('token') ?? '';
+
     document.getElementById('btn-logout')?.addEventListener('click', () => {
-        // Borramos el token de localStorage
         localStorage.removeItem('token');
-        // Borramos la cookie poniendo una fecha de expiración en el pasado
+        localStorage.removeItem('role');
+        localStorage.removeItem('permissions');
         document.cookie = 'token=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
-        // Redirigimos al login
+        document.cookie = 'role=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
+        document.cookie = 'permissions=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
         window.location.href = '/login';
     });
+
+    if (canSearch) {
+        const input = document.getElementById('global-search');
+        const panel = document.getElementById('search-results');
+        let timer = null;
+
+        const escapeHtml = (value = '') =>
+            value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+
+        const render = (data) => {
+            const productos = data?.productos ?? [];
+            const categorias = data?.categorias ?? [];
+            const movimientos = data?.movimientos ?? [];
+
+            if (!productos.length && !categorias.length && !movimientos.length) {
+                panel.innerHTML = '<div class="search-empty">Sin resultados</div>';
+                panel.style.display = 'block';
+                return;
+            }
+
+            const mapItems = (items, formatter) => items.map(formatter).join('');
+
+            panel.innerHTML = `
+                ${productos.length ? `
+                    <div class="search-group">
+                        <p class="search-group-title">Productos</p>
+                        ${mapItems(productos, (p) =>
+                            `<a class="search-item" href="/productos"><strong>${escapeHtml(p.nombre)}</strong> <span>#${p.id}</span></a>`
+                        )}
+                    </div>` : ''}
+                ${categorias.length ? `
+                    <div class="search-group">
+                        <p class="search-group-title">Categorías</p>
+                        ${mapItems(categorias, (c) =>
+                            `<a class="search-item" href="/categorias"><strong>${escapeHtml(c.nombre)}</strong> <span>#${c.id}</span></a>`
+                        )}
+                    </div>` : ''}
+                ${movimientos.length ? `
+                    <div class="search-group">
+                        <p class="search-group-title">Movimientos</p>
+                        ${mapItems(movimientos, (m) =>
+                            `<a class="search-item" href="/historico"><strong>${escapeHtml(m.producto ?? 'N/A')}</strong> <span>${m.tipo} • ${m.cantidad}</span></a>`
+                        )}
+                    </div>` : ''}
+            `;
+            panel.style.display = 'block';
+        };
+
+        input?.addEventListener('input', () => {
+            const q = input.value.trim();
+            clearTimeout(timer);
+            if (!q) {
+                panel.style.display = 'none';
+                panel.innerHTML = '';
+                return;
+            }
+
+            timer = setTimeout(async () => {
+                try {
+                    const resp = await fetch(`${apiUrl}/buscar?q=${encodeURIComponent(q)}`, {
+                        headers: { Authorization: `Bearer ${token}` }
+                    });
+                    if (!resp.ok) throw new Error('Error de búsqueda');
+                    render(await resp.json());
+                } catch {
+                    panel.innerHTML = '<div class="search-empty">No se pudo buscar</div>';
+                    panel.style.display = 'block';
+                }
+            }, 240);
+        });
+
+        document.addEventListener('click', (event) => {
+            if (!panel.contains(event.target) && !input.contains(event.target)) {
+                panel.style.display = 'none';
+            }
+        });
+    }
 </script>
 </body>
 </html>
 
 <style is:global>
-    /* is:global hace que estos estilos apliquen a toda la app,
-       no solo a este componente */
-
     *, *::before, *::after {
         margin: 0;
         padding: 0;
@@ -144,14 +252,10 @@ const { title, activePage } = Astro.props;
         line-height: 1.5;
     }
 
-    /* ─── LAYOUT ──────────────────────────────────────────────── */
-
     .app {
         display: flex;
         min-height: 100vh;
     }
-
-    /* ─── SIDEBAR ─────────────────────────────────────────────── */
 
     .sidebar {
         width: var(--sidebar-width);
@@ -175,7 +279,6 @@ const { title, activePage } = Astro.props;
     }
 
     .logo-box {
-        /* El cuadro naranja con las iniciales */
         background: var(--primary);
         color: white;
         font-family: var(--font-mono);
@@ -250,6 +353,21 @@ const { title, activePage } = Astro.props;
         flex-shrink: 0;
     }
 
+    .critical-badge {
+        margin-left: auto;
+        min-width: 22px;
+        height: 22px;
+        border-radius: 11px;
+        background: #c62828;
+        color: white;
+        font-size: 11px;
+        font-weight: 700;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0 6px;
+    }
+
     .sidebar-footer {
         padding: 0 8px;
     }
@@ -261,10 +379,7 @@ const { title, activePage } = Astro.props;
         letter-spacing: 1px;
     }
 
-    /* ─── MAIN ────────────────────────────────────────────────── */
-
     .main {
-        /* margin-left empuja el contenido para que no quede debajo del sidebar fijo */
         margin-left: var(--sidebar-width);
         flex: 1;
         display: flex;
@@ -294,14 +409,82 @@ const { title, activePage } = Astro.props;
     .header-actions {
         display: flex;
         gap: 10px;
+        align-items: center;
+    }
+
+    .search-box {
+        position: relative;
+        width: min(420px, 48vw);
+    }
+
+    .search-box input {
+        width: 100%;
+        height: 38px;
+        padding: 0 12px;
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        font-size: 14px;
+    }
+
+    .search-results {
+        position: absolute;
+        top: calc(100% + 8px);
+        left: 0;
+        right: 0;
+        background: white;
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        box-shadow: var(--shadow);
+        max-height: 420px;
+        overflow-y: auto;
+        z-index: 120;
+    }
+
+    .search-group {
+        padding: 8px 0;
+        border-bottom: 1px solid var(--border);
+    }
+
+    .search-group:last-child {
+        border-bottom: none;
+    }
+
+    .search-group-title {
+        font-family: var(--font-mono);
+        font-size: 11px;
+        color: var(--text-muted);
+        padding: 4px 12px 8px;
+    }
+
+    .search-item {
+        display: flex;
+        justify-content: space-between;
+        gap: 8px;
+        text-decoration: none;
+        color: var(--text);
+        padding: 8px 12px;
+        font-size: 13px;
+    }
+
+    .search-item:hover {
+        background: var(--light);
+    }
+
+    .search-item span {
+        color: var(--text-muted);
+        font-size: 12px;
+    }
+
+    .search-empty {
+        padding: 12px;
+        font-size: 13px;
+        color: var(--text-muted);
     }
 
     .page-content {
         padding: 32px;
         flex: 1;
     }
-
-    /* ─── BOTONES ─────────────────────────────────────────────── */
 
     .btn {
         display: inline-flex;
@@ -374,8 +557,6 @@ const { title, activePage } = Astro.props;
         border-color: #333;
     }
 
-    /* ─── TABLAS ──────────────────────────────────────────────── */
-
     .table-wrapper {
         background: white;
         border-radius: var(--radius);
@@ -420,9 +601,8 @@ const { title, activePage } = Astro.props;
     .actions-cell {
         display: flex;
         gap: 6px;
+        flex-wrap: wrap;
     }
-
-    /* ─── TARJETAS DASHBOARD ──────────────────────────────────── */
 
     .cards-grid {
         display: grid;
@@ -460,8 +640,6 @@ const { title, activePage } = Astro.props;
         color: var(--primary);
     }
 
-    /* ─── ALERTAS ─────────────────────────────────────────────── */
-
     .alert {
         padding: 12px 16px;
         border-radius: var(--radius);
@@ -482,12 +660,20 @@ const { title, activePage } = Astro.props;
         border: 1px solid #FFCDD2;
     }
 
-    /* ─── STOCK ───────────────────────────────────────────────── */
-
     .stock-ok   { color: var(--success); font-weight: 600; }
     .stock-low  { color: var(--primary); font-weight: 600; }
 
-    /* ─── RESPONSIVE ──────────────────────────────────────────── */
+    @media (max-width: 900px) {
+        .header-actions {
+            width: 100%;
+            justify-content: flex-end;
+        }
+
+        .search-box {
+            width: 100%;
+            max-width: 360px;
+        }
+    }
 
     @media (max-width: 768px) {
         .sidebar {
@@ -500,7 +686,7 @@ const { title, activePage } = Astro.props;
         }
 
         .logo { margin-bottom: 0; margin-right: 20px; }
-        .nav  { flex-direction: row; gap: 4px; }
+        .nav  { flex-direction: row; gap: 4px; flex-wrap: wrap; }
         .sidebar-footer { display: none; }
 
         .main { margin-left: 0; }

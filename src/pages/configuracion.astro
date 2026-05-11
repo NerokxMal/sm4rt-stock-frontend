@@ -1,13 +1,7 @@
 ---
-// Página de configuración — solo accesible para ADMIN.
-// El middleware ya protege todas las rutas no públicas.
-// Aquí además verificamos el rol para redirigir si es USER.
-
 import Layout from '../layouts/Layout.astro';
 
 const roleCookie = Astro.cookies.get('role')?.value ?? 'USER';
-
-// Si no es admin, redirigir al dashboard
 if (roleCookie !== 'ADMIN') {
     return Astro.redirect('/');
 }
@@ -15,96 +9,119 @@ if (roleCookie !== 'ADMIN') {
 const API_URL = import.meta.env.PUBLIC_API_URL ?? 'http://localhost:8080';
 const tokenCookie = Astro.cookies.get('token')?.value ?? '';
 
-// Cargar la lista de usuarios en el servidor
-let usuarios: { id: number; username: string; role: string; enabled: boolean }[] = [];
+let usuarios: { id: number; username: string; role: string; enabled: boolean; permissions: string[] }[] = [];
+let permisosDisponibles: string[] = [];
 
 try {
-    const resp = await fetch(`${API_URL}/auth/users`, {
-        headers: {
-            'Authorization': `Bearer ${tokenCookie}`,
-            'Content-Type': 'application/json',
-        }
-    });
-    if (resp.ok) {
-        usuarios = await resp.json();
-    }
+    const [usersResp, permsResp] = await Promise.all([
+        fetch(`${API_URL}/auth/users`, {
+            headers: { Authorization: `Bearer ${tokenCookie}` }
+        }),
+        fetch(`${API_URL}/auth/permissions`, {
+            headers: { Authorization: `Bearer ${tokenCookie}` }
+        }),
+    ]);
+    if (usersResp.ok) usuarios = await usersResp.json();
+    if (permsResp.ok) permisosDisponibles = await permsResp.json();
 } catch (e) {
-    console.error('No se pudo cargar la lista de usuarios:', e);
+    console.error('No se pudo cargar configuración:', e);
 }
 
+const permisosLabels: Record<string, string> = {
+    PRODUCT_VIEW: 'Ver productos',
+    PRODUCT_CREATE: 'Crear productos',
+    PRODUCT_STOCK_EDIT: 'Editar stock',
+    PRODUCT_DELETE: 'Eliminar productos',
+    CATEGORY_VIEW: 'Ver categorías',
+    CATEGORY_MANAGE: 'Gestionar categorías',
+    HISTORY_VIEW: 'Ver historial',
+    DASHBOARD_VIEW: 'Ver dashboard',
+    DATA_EXPORT: 'Exportar datos',
+};
+
 const usuariosJSON = JSON.stringify(usuarios);
+const permisosJSON = JSON.stringify(permisosDisponibles);
+const permisosLabelsJSON = JSON.stringify(permisosLabels);
 ---
 
 <Layout title="Configuración" activePage="configuracion">
-
-    <!-- ─── SECCIÓN 1: USUARIOS DEL SISTEMA ──────────────────────────── -->
-
     <div class="config-section">
         <div class="section-header">
             <div>
-                <h2 class="section-title">Usuarios del sistema</h2>
-                <p class="section-desc">Administra roles y acceso de cada usuario.</p>
+                <h2 class="section-title">Matriz de permisos</h2>
+                <p class="section-desc">Usuarios en filas y permisos por columna.</p>
             </div>
         </div>
 
         <div id="alert-usuarios" class="alert" style="display:none;"></div>
 
         <div class="table-wrapper">
-            <table id="tabla-usuarios">
+            <table id="tabla-permisos">
                 <thead>
                 <tr>
                     <th>Usuario</th>
                     <th>Rol</th>
                     <th>Estado</th>
+                    {permisosDisponibles.map((perm) => (
+                        <th>{permisosLabels[perm] ?? perm}</th>
+                    ))}
                     <th>Acciones</th>
                 </tr>
                 </thead>
                 <tbody>
-                {usuarios.map(u => (
-                        <tr id={`fila-${u.id}`}>
+                {usuarios.map((u) => (
+                    <tr data-username={u.username}>
+                        <td><span class="username-badge">@{u.username}</span></td>
+                        <td>
+                            <span class={`role-badge ${u.role === 'ADMIN' ? 'role-admin' : 'role-user'}`}>
+                                {u.role}
+                            </span>
+                        </td>
+                        <td>
+                            <span class={`status-badge ${u.enabled ? 'status-active' : 'status-inactive'}`}>
+                                {u.enabled ? 'Activo' : 'Inactivo'}
+                            </span>
+                        </td>
+                        {permisosDisponibles.map((perm) => (
                             <td>
-                                <span class="username-badge">@{u.username}</span>
+                                <label class="switch">
+                                    <input
+                                        type="checkbox"
+                                        data-action="toggle-perm"
+                                        data-username={u.username}
+                                        data-permission={perm}
+                                        checked={u.permissions?.includes(perm)}
+                                    />
+                                    <span class="slider"></span>
+                                </label>
                             </td>
-                            <td>
-                                <span class={`role-badge ${u.role === 'ADMIN' ? 'role-admin' : 'role-user'}`}>
-                                    {u.role}
-                                </span>
-                            </td>
-                            <td>
-                                <span class={`status-badge ${u.enabled ? 'status-active' : 'status-inactive'}`}>
-                                    {u.enabled ? 'Activo' : 'Inactivo'}
-                                </span>
-                            </td>
-                            <td>
-                                <div class="actions-cell">
-                                    <!-- Botón para cambiar rol — alterna entre ADMIN y USER -->
-                                    <button
-                                            class="btn btn-edit btn-sm"
-                                            data-action="toggle-role"
-                                            data-username={u.username}
-                                            data-current-role={u.role}
-                                    >
-                                        {u.role === 'ADMIN' ? 'Quitar ADMIN' : 'Hacer ADMIN'}
-                                    </button>
-                                    <!-- Botón para activar/desactivar -->
-                                    <button
-                                            class={`btn btn-sm ${u.enabled ? 'btn-danger' : 'btn-success'}`}
-                                            data-action="toggle-status"
-                                            data-username={u.username}
-                                            data-enabled={String(u.enabled)}
-                                    >
-                                        {u.enabled ? 'Desactivar' : 'Activar'}
-                                    </button>
-                                </div>
-                            </td>
-                        </tr>
+                        ))}
+                        <td>
+                            <div class="actions-cell">
+                                <button
+                                    class="btn btn-edit btn-sm"
+                                    data-action="toggle-role"
+                                    data-username={u.username}
+                                    data-current-role={u.role}
+                                >
+                                    {u.role === 'ADMIN' ? 'Quitar ADMIN' : 'Hacer ADMIN'}
+                                </button>
+                                <button
+                                    class={`btn btn-sm ${u.enabled ? 'btn-danger' : 'btn-success'}`}
+                                    data-action="toggle-status"
+                                    data-username={u.username}
+                                    data-enabled={String(u.enabled)}
+                                >
+                                    {u.enabled ? 'Desactivar' : 'Activar'}
+                                </button>
+                            </div>
+                        </td>
+                    </tr>
                 ))}
                 </tbody>
             </table>
         </div>
     </div>
-
-    <!-- ─── SECCIÓN 2: CREAR USUARIO ─────────────────────────────────── -->
 
     <div class="config-section">
         <div class="section-header">
@@ -120,24 +137,11 @@ const usuariosJSON = JSON.stringify(usuarios);
             <div class="form-row-3">
                 <div class="form-group">
                     <label for="new-username">Username *</label>
-                    <input
-                            type="text"
-                            id="new-username"
-                            placeholder="nombre_usuario"
-                            autocomplete="off"
-                            required
-                    />
+                    <input type="text" id="new-username" required />
                 </div>
                 <div class="form-group">
                     <label for="new-password">Contraseña *</label>
-                    <input
-                            type="password"
-                            id="new-password"
-                            placeholder="Mínimo 6 caracteres"
-                            autocomplete="new-password"
-                            required
-                            minlength="6"
-                    />
+                    <input type="password" id="new-password" required minlength="6" />
                 </div>
                 <div class="form-group">
                     <label for="new-role">Rol *</label>
@@ -155,8 +159,6 @@ const usuariosJSON = JSON.stringify(usuarios);
         </form>
     </div>
 
-    <!-- ─── SECCIÓN 3: CAMBIAR MI CONTRASEÑA ─────────────────────────── -->
-
     <div class="config-section">
         <div class="section-header">
             <div>
@@ -171,35 +173,15 @@ const usuariosJSON = JSON.stringify(usuarios);
             <div class="form-row-3">
                 <div class="form-group">
                     <label for="pwd-actual">Contraseña actual *</label>
-                    <input
-                            type="password"
-                            id="pwd-actual"
-                            placeholder="Tu contraseña actual"
-                            autocomplete="current-password"
-                            required
-                    />
+                    <input type="password" id="pwd-actual" required />
                 </div>
                 <div class="form-group">
                     <label for="pwd-nueva">Nueva contraseña *</label>
-                    <input
-                            type="password"
-                            id="pwd-nueva"
-                            placeholder="Mínimo 6 caracteres"
-                            autocomplete="new-password"
-                            required
-                            minlength="6"
-                    />
+                    <input type="password" id="pwd-nueva" required minlength="6" />
                 </div>
                 <div class="form-group">
                     <label for="pwd-confirmar">Confirmar contraseña *</label>
-                    <input
-                            type="password"
-                            id="pwd-confirmar"
-                            placeholder="Repite la nueva contraseña"
-                            autocomplete="new-password"
-                            required
-                            minlength="6"
-                    />
+                    <input type="password" id="pwd-confirmar" required minlength="6" />
                 </div>
             </div>
             <div class="form-actions-inline">
@@ -212,12 +194,14 @@ const usuariosJSON = JSON.stringify(usuarios);
 
 </Layout>
 
-<script is:inline define:vars={{ usuariosJSON, apiUrl: 'http://localhost:8080' }}>
-
+<script is:inline define:vars={{ usuariosJSON, permisosJSON, permisosLabelsJSON, apiUrl: API_URL }}>
     const token = localStorage.getItem('token') ?? '';
-    let usuarios = JSON.parse(usuariosJSON);
+    const usuarios = JSON.parse(usuariosJSON);
+    const permisosDisponibles = JSON.parse(permisosJSON);
+    const permisosLabels = JSON.parse(permisosLabelsJSON);
 
-    // ─── UTILIDADES ───────────────────────────────────────────────────
+    const statePerms = new Map();
+    usuarios.forEach(u => statePerms.set(u.username, new Set(u.permissions ?? [])));
 
     function mostrarAlerta(seccion, mensaje, tipo) {
         const el = document.getElementById(`alert-${seccion}`);
@@ -231,7 +215,7 @@ const usuariosJSON = JSON.stringify(usuarios);
         const opts = {
             method,
             headers: {
-                'Authorization': `Bearer ${token}`,
+                Authorization: `Bearer ${token}`,
                 'Content-Type': 'application/json',
             }
         };
@@ -242,124 +226,92 @@ const usuariosJSON = JSON.stringify(usuarios);
         return data;
     }
 
-    // ─── DELEGACIÓN DE EVENTOS — TABLA DE USUARIOS ────────────────────
+    async function guardarPermisos(username) {
+        const set = statePerms.get(username) ?? new Set();
+        const permissions = Array.from(set);
+        await fetchAuth(`${apiUrl}/auth/users/${username}/permissions`, 'PUT', { permissions });
+    }
+
+    document.addEventListener('change', async (e) => {
+        const input = e.target.closest('input[data-action="toggle-perm"]');
+        if (!input) return;
+
+        const username = input.dataset.username;
+        const permission = input.dataset.permission;
+        const checked = input.checked;
+
+        const set = statePerms.get(username) ?? new Set();
+        if (checked) set.add(permission); else set.delete(permission);
+        statePerms.set(username, set);
+
+        try {
+            await guardarPermisos(username);
+            mostrarAlerta('usuarios', `Permisos actualizados para @${username}`, 'success');
+        } catch (err) {
+            input.checked = !checked;
+            if (checked) set.delete(permission); else set.add(permission);
+            mostrarAlerta('usuarios', err.message, 'error');
+        }
+    });
 
     document.addEventListener('click', async (e) => {
         const btn = e.target.closest('[data-action]');
-        if (!btn) return;
+        if (!btn || btn.dataset.action === 'toggle-perm') return;
 
-        const action   = btn.dataset.action;
+        const action = btn.dataset.action;
         const username = btn.dataset.username;
 
-        // ── TOGGLE ROL ──────────────────────────────────────────────
         if (action === 'toggle-role') {
             const currentRole = btn.dataset.currentRole;
             const newRole = currentRole === 'ADMIN' ? 'USER' : 'ADMIN';
 
             try {
                 await fetchAuth(`${apiUrl}/auth/users/${username}/role?role=${newRole}`, 'PUT');
-
-                // Actualizar la fila en el DOM sin recargar toda la página
-                const fila = btn.closest('tr');
-                const roleBadge = fila.querySelector('.role-badge');
-                roleBadge.textContent = newRole;
-                roleBadge.className = `role-badge ${newRole === 'ADMIN' ? 'role-admin' : 'role-user'}`;
-                btn.textContent = newRole === 'ADMIN' ? 'Quitar ADMIN' : 'Hacer ADMIN';
-                btn.dataset.currentRole = newRole;
-
-                mostrarAlerta('usuarios', `Rol de @${username} actualizado a ${newRole}`, 'success');
+                window.location.reload();
             } catch (err) {
                 mostrarAlerta('usuarios', err.message, 'error');
             }
         }
 
-        // ── TOGGLE ESTADO ────────────────────────────────────────────
         if (action === 'toggle-status') {
             const isEnabled = btn.dataset.enabled === 'true';
             const accion = isEnabled ? 'desactivar' : 'activar';
-
             if (!confirm(`¿${accion.charAt(0).toUpperCase() + accion.slice(1)} la cuenta de @${username}?`)) return;
 
             try {
-                const data = await fetchAuth(`${apiUrl}/auth/users/${username}/status`, 'PUT');
-                const nuevoEstado = data.enabled === 'true';
-
-                // Actualizar DOM
-                const fila = btn.closest('tr');
-                const statusBadge = fila.querySelector('.status-badge');
-                statusBadge.textContent = nuevoEstado ? 'Activo' : 'Inactivo';
-                statusBadge.className = `status-badge ${nuevoEstado ? 'status-active' : 'status-inactive'}`;
-                btn.textContent = nuevoEstado ? 'Desactivar' : 'Activar';
-                btn.className = `btn btn-sm ${nuevoEstado ? 'btn-danger' : 'btn-success'}`;
-                btn.dataset.enabled = String(nuevoEstado);
-
-                mostrarAlerta('usuarios', `Cuenta de @${username} ${nuevoEstado ? 'activada' : 'desactivada'}`, 'success');
+                await fetchAuth(`${apiUrl}/auth/users/${username}/status`, 'PUT');
+                window.location.reload();
             } catch (err) {
                 mostrarAlerta('usuarios', err.message, 'error');
             }
         }
     });
 
-    // ─── CREAR USUARIO ────────────────────────────────────────────────
-
     document.getElementById('form-crear-usuario').addEventListener('submit', async (e) => {
         e.preventDefault();
-
         const username = document.getElementById('new-username').value.trim();
         const password = document.getElementById('new-password').value;
-        const role     = document.getElementById('new-role').value;
+        const role = document.getElementById('new-role').value;
 
         if (password.length < 6) {
             mostrarAlerta('crear', 'La contraseña debe tener al menos 6 caracteres', 'error');
             return;
         }
 
-        const btn = e.target.querySelector('button[type="submit"]');
-        btn.disabled = true;
-        btn.textContent = 'Creando...';
-
         try {
             await fetchAuth(`${apiUrl}/auth/users`, 'POST', { username, password, role });
-
             mostrarAlerta('crear', `Usuario @${username} creado correctamente como ${role}`, 'success');
-            e.target.reset();
-
-            // Agregar la nueva fila a la tabla sin recargar
-            const tbody = document.querySelector('#tabla-usuarios tbody');
-            const newRow = document.createElement('tr');
-            newRow.innerHTML = `
-                <td><span class="username-badge">@${username}</span></td>
-                <td><span class="role-badge ${role === 'ADMIN' ? 'role-admin' : 'role-user'}">${role}</span></td>
-                <td><span class="status-badge status-active">Activo</span></td>
-                <td>
-                    <div class="actions-cell">
-                        <button class="btn btn-edit btn-sm" data-action="toggle-role"
-                            data-username="${username}" data-current-role="${role}">
-                            ${role === 'ADMIN' ? 'Quitar ADMIN' : 'Hacer ADMIN'}
-                        </button>
-                        <button class="btn btn-danger btn-sm" data-action="toggle-status"
-                            data-username="${username}" data-enabled="true">
-                            Desactivar
-                        </button>
-                    </div>
-                </td>`;
-            tbody.appendChild(newRow);
-
+            window.location.reload();
         } catch (err) {
             mostrarAlerta('crear', err.message, 'error');
-        } finally {
-            btn.disabled = false;
-            btn.textContent = '+ Crear usuario';
         }
     });
-
-    // ─── CAMBIAR CONTRASEÑA PROPIA ────────────────────────────────────
 
     document.getElementById('form-cambiar-password').addEventListener('submit', async (e) => {
         e.preventDefault();
 
-        const passwordActual   = document.getElementById('pwd-actual').value;
-        const passwordNuevo    = document.getElementById('pwd-nueva').value;
+        const passwordActual = document.getElementById('pwd-actual').value;
+        const passwordNuevo = document.getElementById('pwd-nueva').value;
         const passwordConfirmar = document.getElementById('pwd-confirmar').value;
 
         if (passwordNuevo !== passwordConfirmar) {
@@ -367,191 +319,73 @@ const usuariosJSON = JSON.stringify(usuarios);
             return;
         }
 
-        if (passwordNuevo.length < 6) {
-            mostrarAlerta('password', 'La nueva contraseña debe tener al menos 6 caracteres', 'error');
-            return;
-        }
-
-        const btn = e.target.querySelector('button[type="submit"]');
-        btn.disabled = true;
-        btn.textContent = 'Actualizando...';
-
         try {
             await fetchAuth(`${apiUrl}/auth/password`, 'PUT', {
                 passwordActual,
                 passwordNuevo,
                 passwordConfirmar
             });
-
             mostrarAlerta('password', 'Contraseña actualizada correctamente', 'success');
             e.target.reset();
-
         } catch (err) {
             mostrarAlerta('password', err.message, 'error');
-        } finally {
-            btn.disabled = false;
-            btn.textContent = 'Actualizar contraseña';
         }
     });
 </script>
 
 <style>
-    /* ─── ESTRUCTURA DE SECCIONES ──────────────────────────────── */
+    .config-section { background: white; border: 1px solid var(--border); border-radius: var(--radius); padding: 28px; margin-bottom: 24px; }
+    .section-header { margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid var(--border); }
+    .section-title { font-family: var(--font-mono); font-size: 14px; font-weight: 700; letter-spacing: 0.3px; color: var(--text); margin-bottom: 4px; }
+    .section-desc { font-size: 13px; color: var(--text-muted); }
+    .table-wrapper { overflow-x: auto; }
+    table { min-width: 1180px; }
+    .username-badge { font-family: var(--font-mono); font-size: 13px; font-weight: 600; color: var(--text); }
+    .role-badge { display: inline-block; padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 700; font-family: var(--font-mono); letter-spacing: 0.5px; }
+    .role-admin { background: rgba(216, 73, 16, 0.1); color: var(--primary); border: 1px solid rgba(216, 73, 16, 0.2); }
+    .role-user { background: var(--light-2); color: var(--text-muted); border: 1px solid var(--border); }
+    .status-badge { display: inline-block; padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 600; font-family: var(--font-mono); }
+    .status-active { background: var(--success-bg); color: var(--success); border: 1px solid #C8E6C9; }
+    .status-inactive { background: var(--error-bg); color: var(--error); border: 1px solid #FFCDD2; }
+    .btn-success { background: transparent; color: var(--success); border: 1px solid #C8E6C9; }
+    .btn-success:hover { background: var(--success-bg); }
 
-    .config-section {
-        background: white;
-        border: 1px solid var(--border);
-        border-radius: var(--radius);
-        padding: 28px;
-        margin-bottom: 24px;
-    }
-
-    .section-header {
-        margin-bottom: 20px;
-        padding-bottom: 16px;
-        border-bottom: 1px solid var(--border);
-    }
-
-    .section-title {
-        font-family: var(--font-mono);
-        font-size: 14px;
-        font-weight: 700;
-        letter-spacing: 0.3px;
-        color: var(--text);
-        margin-bottom: 4px;
-    }
-
-    .section-desc {
-        font-size: 13px;
-        color: var(--text-muted);
-    }
-
-    /* ─── BADGES ────────────────────────────────────────────────── */
-
-    .username-badge {
-        font-family: var(--font-mono);
-        font-size: 13px;
-        font-weight: 600;
-        color: var(--text);
-    }
-
-    .role-badge {
-        display: inline-block;
-        padding: 3px 10px;
+    .switch { position: relative; display: inline-block; width: 36px; height: 20px; }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .slider {
+        position: absolute;
+        cursor: pointer;
+        inset: 0;
+        background-color: #d5d5d5;
+        transition: .2s;
         border-radius: 20px;
-        font-size: 11px;
-        font-weight: 700;
-        font-family: var(--font-mono);
-        letter-spacing: 0.5px;
     }
-
-    .role-admin {
-        background: rgba(216, 73, 16, 0.1);
-        color: var(--primary);
-        border: 1px solid rgba(216, 73, 16, 0.2);
+    .slider:before {
+        position: absolute;
+        content: "";
+        height: 14px;
+        width: 14px;
+        left: 3px;
+        bottom: 3px;
+        background-color: white;
+        transition: .2s;
+        border-radius: 50%;
     }
+    input:checked + .slider { background-color: var(--primary); }
+    input:checked + .slider:before { transform: translateX(16px); }
 
-    .role-user {
-        background: var(--light-2);
-        color: var(--text-muted);
-        border: 1px solid var(--border);
-    }
-
-    .status-badge {
-        display: inline-block;
-        padding: 3px 10px;
-        border-radius: 20px;
-        font-size: 11px;
-        font-weight: 600;
-        font-family: var(--font-mono);
-    }
-
-    .status-active {
-        background: var(--success-bg);
-        color: var(--success);
-        border: 1px solid #C8E6C9;
-    }
-
-    .status-inactive {
-        background: var(--error-bg);
-        color: var(--error);
-        border: 1px solid #FFCDD2;
-    }
-
-    /* ─── BOTÓN ACTIVAR (verde) ─────────────────────────────────── */
-
-    .btn-success {
-        background: transparent;
-        color: var(--success);
-        border: 1px solid #C8E6C9;
-    }
-
-    .btn-success:hover {
-        background: var(--success-bg);
-    }
-
-    /* ─── FORMULARIOS INLINE ────────────────────────────────────── */
-
-    .inline-form {
-        display: flex;
-        flex-direction: column;
-        gap: 16px;
-    }
-
-    /* Grid de 3 columnas para los campos del formulario */
-    .form-row-3 {
-        display: grid;
-        grid-template-columns: 1fr 1fr 1fr;
-        gap: 16px;
-    }
-
-    .form-group {
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-    }
-
-    label {
-        font-size: 12px;
-        font-weight: 600;
-        color: var(--text-muted);
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-    }
-
-    input, select {
-        padding: 9px 12px;
-        border: 1px solid var(--border);
-        border-radius: var(--radius);
-        font-family: var(--font-sans);
-        font-size: 14px;
-        color: var(--text);
-        background: white;
-        transition: border-color 0.15s;
-    }
-
-    input:focus, select:focus {
-        outline: none;
-        border-color: var(--primary);
-        box-shadow: 0 0 0 3px var(--primary-dim);
-    }
-
-    .form-actions-inline {
-        display: flex;
-        justify-content: flex-start;
-    }
-
-    /* ─── RESPONSIVE ────────────────────────────────────────────── */
+    .inline-form { display: flex; flex-direction: column; gap: 16px; }
+    .form-row-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+    .form-group { display: flex; flex-direction: column; gap: 6px; }
+    label { font-size: 12px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
+    input, select { padding: 9px 12px; border: 1px solid var(--border); border-radius: var(--radius); font-size: 14px; background: white; }
+    .form-actions-inline { display: flex; justify-content: flex-start; }
 
     @media (max-width: 900px) {
-        .form-row-3 {
-            grid-template-columns: 1fr 1fr;
-        }
+        .form-row-3 { grid-template-columns: 1fr 1fr; }
     }
 
     @media (max-width: 600px) {
-        .form-row-3 {
-            grid-template-columns: 1fr;
-        }
+        .form-row-3 { grid-template-columns: 1fr; }
     }
 </style>

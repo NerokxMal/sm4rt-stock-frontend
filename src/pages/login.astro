@@ -1,6 +1,7 @@
 ---
 // La página de login no usa Layout porque tiene su propio diseño.
 // No queremos sidebar ni header aquí.
+const API_URL = import.meta.env.PUBLIC_API_URL ?? 'http://localhost:8080';
 ---
 
 <!DOCTYPE html>
@@ -82,22 +83,24 @@
 </body>
 </html>
 
-<script>
-    const form     = document.getElementById('login-form') as HTMLFormElement;
-    const alertEl  = document.getElementById('alert') as HTMLDivElement;
-    const btnSubmit = document.getElementById('btn-submit') as HTMLButtonElement;
+<script define:vars={{ apiUrl: API_URL }}>
+    const form = document.getElementById('login-form');
+    const alertEl = document.getElementById('alert');
+    const btnSubmit = document.getElementById('btn-submit');
 
     form.addEventListener('submit', async (e) => {
         e.preventDefault();
 
-        const username = (document.getElementById('username') as HTMLInputElement).value;
-        const password = (document.getElementById('password') as HTMLInputElement).value;
+        const usernameInput = document.getElementById('username');
+        const passwordInput = document.getElementById('password');
+        const username = usernameInput ? usernameInput.value : '';
+        const password = passwordInput ? passwordInput.value : '';
 
         btnSubmit.disabled = true;
         btnSubmit.textContent = 'Ingresando...';
 
         try {
-            const response = await fetch('http://localhost:8080/auth/login', {
+            const response = await fetch(`${apiUrl}/auth/login`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ username, password }),
@@ -108,17 +111,20 @@
                 throw new Error(data.error ?? 'Credenciales incorrectas');
             }
 
-            // 1. Desestructuramos el JSON para obtener 'token' y 'role'
-            const { token, role } = await response.json();
+            // 1. Desestructuramos el JSON para obtener token, role y permissions
+            const { token, role, permissions } = await response.json();
+            const permissionsEncoded = encodeURIComponent(JSON.stringify(permissions ?? []));
 
             // 2. Guardamos AMBOS en localStorage para uso del JS en el navegador
             localStorage.setItem('token', token);
-            localStorage.setItem('role', role); // <-- Nuevo: Guardar el rol
+            localStorage.setItem('role', role);
+            localStorage.setItem('permissions', JSON.stringify(permissions ?? []));
 
             // 3. Guardamos AMBOS en cookies para el middleware del servidor
             const expires = new Date(Date.now() + 86400000).toUTCString();
             document.cookie = `token=${token}; expires=${expires}; path=/`;
-            document.cookie = `role=${role}; expires=${expires}; path=/`; // <-- Nuevo: Guardar cookie de rol
+            document.cookie = `role=${role}; expires=${expires}; path=/`;
+            document.cookie = `permissions=${permissionsEncoded}; expires=${expires}; path=/`;
 
             // Redirigimos al dashboard
             window.location.href = '/';

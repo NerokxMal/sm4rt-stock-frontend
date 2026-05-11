@@ -1,27 +1,25 @@
 ---
 import Layout from '../layouts/Layout.astro';
+import { hasPermission, parsePermissions } from '../lib/session';
 
 const API_URL = import.meta.env.PUBLIC_API_URL ?? 'http://localhost:8080';
+const token = Astro.cookies.get('token')?.value ?? '';
+const role = Astro.cookies.get('role')?.value;
+const permissions = parsePermissions(Astro.cookies.get('permissions')?.value, role);
+const canView = hasPermission(permissions, 'HISTORY_VIEW');
+const canExport = hasPermission(permissions, 'DATA_EXPORT');
 
-// Cargamos los últimos 30 días por defecto en el servidor.
-// El usuario puede cambiar el rango desde el frontend sin recargar.
-let movimientos: {
-    id: number;
-    tipo: string;
-    cantidad: number;
-    stockAnterior: number;
-    stockNuevo: number;
-    fecha: string;
-    producto: { id: number; nombre: string } | null;
-    usuario: { username: string } | null;
-}[] = [];
+if (!canView) {
+    return Astro.redirect('/');
+}
 
+let movimientos: any[] = [];
 let productos: { id: number; nombre: string }[] = [];
 
 try {
     const [movResp, prodResp] = await Promise.all([
-        fetch(`${API_URL}/movimientos`),
-        fetch(`${API_URL}/productos`),
+        fetch(`${API_URL}/movimientos`, { headers: { Authorization: `Bearer ${token}` } }),
+        fetch(`${API_URL}/productos`, { headers: { Authorization: `Bearer ${token}` } }),
     ]);
     if (movResp.ok)  movimientos = await movResp.json();
     if (prodResp.ok) productos   = await prodResp.json();
@@ -29,25 +27,30 @@ try {
     console.error('Error cargando histórico:', e);
 }
 
-// Totales para las tarjetas de resumen (calculados en el servidor)
-const totalEntradas = movimientos
-    .filter(m => m.tipo === 'ENTRADA')
+const contarEntradas = (data: any[]) => data
+    .filter(m => m.tipo === 'ENTRADA' || (m.tipo === 'AJUSTE' && m.stockNuevo >= m.stockAnterior))
     .reduce((s, m) => s + m.cantidad, 0);
 
-const totalSalidas = movimientos
-    .filter(m => m.tipo === 'SALIDA')
+const contarSalidas = (data: any[]) => data
+    .filter(m => m.tipo === 'SALIDA' || (m.tipo === 'AJUSTE' && m.stockNuevo < m.stockAnterior))
     .reduce((s, m) => s + m.cantidad, 0);
 
+const totalEntradas = contarEntradas(movimientos);
+const totalSalidas = contarSalidas(movimientos);
 const totalMovimientos = movimientos.length;
-
-// Serializar para el cliente
 const movimientosJSON = JSON.stringify(movimientos);
-const productosJSON   = JSON.stringify(productos);
+const productosJSON = JSON.stringify(productos);
 ---
 
 <Layout title="Histórico" activePage="historico">
 
-    <!-- ─── TARJETAS DE RESUMEN ────────────────────────────────────── -->
+    {canExport && (
+        <div slot="actions" class="actions-header-group">
+            <button class="btn" id="btn-export-csv">Exportar CSV</button>
+            <button class="btn" id="btn-export-pdf">Exportar PDF</button>
+        </div>
+    )}
+
     <div class="cards-grid" style="margin-bottom: 24px;">
         <div class="card">
             <p class="card-label">Total movimientos</p>
@@ -70,10 +73,8 @@ const productosJSON   = JSON.stringify(productos);
         </div>
     </div>
 
-    <!-- ─── FILTROS ────────────────────────────────────────────────── -->
     <div class="filtros-card">
         <div class="filtros-grid">
-
             <div class="form-group">
                 <label for="filtro-desde">Desde</label>
                 <input type="date" id="filtro-desde" />
@@ -90,6 +91,7 @@ const productosJSON   = JSON.stringify(productos);
                     <option value="">Todos</option>
                     <option value="ENTRADA">Entradas</option>
                     <option value="SALIDA">Salidas</option>
+                    <option value="AJUSTE">Ajustes</option>
                 </select>
             </div>
 
@@ -115,14 +117,10 @@ const productosJSON   = JSON.stringify(productos);
                     <button id="btn-limpiar" class="btn">Limpiar</button>
                 </div>
             </div>
-
         </div>
     </div>
 
-    <!-- ─── GRÁFICAS ──────────────────────────────────────────────── -->
     <div class="charts-grid" style="margin-bottom: 24px;">
-
-        <!-- Línea: entradas vs salidas por día -->
         <div class="chart-card">
             <p class="chart-title">Entradas vs Salidas por día</p>
             <div class="chart-container-tall">
@@ -130,17 +128,14 @@ const productosJSON   = JSON.stringify(productos);
             </div>
         </div>
 
-        <!-- Barras: top productos con más movimientos -->
         <div class="chart-card">
             <p class="chart-title">Top productos por volumen</p>
             <div class="chart-container-tall">
                 <canvas id="chart-barras-productos"></canvas>
             </div>
         </div>
-
     </div>
 
-    <!-- ─── TABLA DE MOVIMIENTOS ──────────────────────────────────── -->
     <div class="table-wrapper">
         <div class="table-toolbar">
             <span id="count-label" class="count-label">
@@ -156,6 +151,7 @@ const productosJSON   = JSON.stringify(productos);
                     <th>Cantidad</th>
                     <th>Stock anterior</th>
                     <th>Stock nuevo</th>
+                    <th>Motivo</th>
                     <th>Usuario</th>
                 </tr>
             </thead>
@@ -167,13 +163,14 @@ const productosJSON   = JSON.stringify(productos);
                         </td>
                         <td><strong>{m.producto?.nombre ?? '—'}</strong></td>
                         <td>
-                            <span class={`tipo-badge ${m.tipo === 'ENTRADA' ? 'tipo-entrada' : 'tipo-salida'}`}>
-                                {m.tipo === 'ENTRADA' ? '▲' : '▼'} {m.tipo}
+                            <span class={`tipo-badge ${m.tipo === 'AJUSTE' ? 'tipo-ajuste' : (m.tipo === 'ENTRADA' ? 'tipo-entrada' : 'tipo-salida')}`}>
+                                {m.tipo}
                             </span>
                         </td>
                         <td class="mono"><strong>{m.cantidad}</strong></td>
                         <td class="mono" style="color:var(--text-muted)">{m.stockAnterior}</td>
                         <td class="mono">{m.stockNuevo}</td>
+                        <td style="font-size:12px">{m.motivo ?? '—'}</td>
                         <td style="color:var(--text-muted); font-size:13px">
                             @{m.usuario?.username ?? 'sistema'}
                         </td>
@@ -188,24 +185,56 @@ const productosJSON   = JSON.stringify(productos);
 
 </Layout>
 
-<script is:inline define:vars={{ movimientosJSON, productosJSON, apiUrl: 'http://localhost:8080' }}>
-
-    // ─── ESTADO ───────────────────────────────────────────────────────
+<script is:inline define:vars={{ movimientosJSON, apiUrl: API_URL, canExport }}>
     let todosLosMovimientos = JSON.parse(movimientosJSON);
-    let movimientosFiltrados = [...todosLosMovimientos];
     let chartLinea = null;
     let chartBarras = null;
+    const token = localStorage.getItem('token') ?? '';
 
-    // ─── INICIALIZAR FECHAS POR DEFECTO ───────────────────────────────
-    // Muestra los últimos 30 días al cargar
     const hoy = new Date();
     const hace30 = new Date(hoy);
     hace30.setDate(hace30.getDate() - 30);
 
-    document.getElementById('filtro-hasta').value = hoy.toISOString().split('T')[0];
-    document.getElementById('filtro-desde').value = hace30.toISOString().split('T')[0];
+    const dateToInput = (d) => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().split('T')[0];
+    document.getElementById('filtro-hasta').value = dateToInput(hoy);
+    document.getElementById('filtro-desde').value = dateToInput(hace30);
 
-    // ─── CARGAR CHART.JS ──────────────────────────────────────────────
+    const isEntrada = (m) => m.tipo === 'ENTRADA' || (m.tipo === 'AJUSTE' && m.stockNuevo >= m.stockAnterior);
+    const isSalida = (m) => m.tipo === 'SALIDA' || (m.tipo === 'AJUSTE' && m.stockNuevo < m.stockAnterior);
+
+    const getTipoVisual = (m) => {
+        if (m.tipo === 'AJUSTE') return 'AJUSTE';
+        return m.tipo === 'ENTRADA' ? 'ENTRADA' : 'SALIDA';
+    };
+
+    if (canExport) {
+        const exportar = async (format) => {
+            const desde = document.getElementById('filtro-desde').value;
+            const hasta = document.getElementById('filtro-hasta').value;
+            const tipo = document.getElementById('filtro-tipo').value;
+            const params = new URLSearchParams();
+            if (desde) params.append('desde', desde);
+            if (hasta) params.append('hasta', hasta);
+            if (tipo) params.append('tipo', tipo);
+            params.append('format', format);
+
+            const resp = await fetch(`${apiUrl}/movimientos/export?${params}`, {
+                headers: { Authorization: `Bearer ${token}` }
+            });
+            if (!resp.ok) return;
+            const blob = await resp.blob();
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `movimientos.${format}`;
+            a.click();
+            URL.revokeObjectURL(url);
+        };
+
+        document.getElementById('btn-export-csv')?.addEventListener('click', () => exportar('csv'));
+        document.getElementById('btn-export-pdf')?.addEventListener('click', () => exportar('pdf'));
+    }
+
     function inicializar() {
         renderTabla(todosLosMovimientos);
         renderGraficas(todosLosMovimientos);
@@ -220,67 +249,55 @@ const productosJSON   = JSON.stringify(productos);
         inicializar();
     }
 
-    // ─── FILTRAR (fetch al backend con parámetros) ─────────────────────
     document.getElementById('btn-filtrar').addEventListener('click', async () => {
-        const desde    = document.getElementById('filtro-desde').value;
-        const hasta    = document.getElementById('filtro-hasta').value;
-        const tipo     = document.getElementById('filtro-tipo').value;
+        const desde = document.getElementById('filtro-desde').value;
+        const hasta = document.getElementById('filtro-hasta').value;
+        const tipo = document.getElementById('filtro-tipo').value;
         const producto = document.getElementById('filtro-producto').value;
-        const texto    = document.getElementById('filtro-texto').value.trim().toLowerCase();
+        const texto = document.getElementById('filtro-texto').value.trim().toLowerCase();
 
-        // Construir URL con parámetros opcionales
         const params = new URLSearchParams();
         if (desde) params.append('desde', desde);
         if (hasta) params.append('hasta', hasta);
-        if (tipo)  params.append('tipo', tipo);
+        if (tipo) params.append('tipo', tipo);
 
         const btn = document.getElementById('btn-filtrar');
         btn.disabled = true;
         btn.textContent = 'Filtrando...';
 
         try {
-            const resp = await fetch(`${apiUrl}/movimientos?${params.toString()}`);
+            const resp = await fetch(`${apiUrl}/movimientos?${params.toString()}`, {
+                headers: { Authorization: `Bearer ${token}` }
+            });
+            if (!resp.ok) throw new Error('Error al filtrar');
             let data = await resp.json();
 
-            // Filtros en cliente: producto y texto
-            if (producto) {
-                data = data.filter(m => m.producto?.id == producto);
-            }
-            if (texto) {
-                data = data.filter(m =>
-                    m.producto?.nombre?.toLowerCase().includes(texto)
-                );
-            }
+            if (producto) data = data.filter(m => m.producto?.id == producto);
+            if (texto) data = data.filter(m => m.producto?.nombre?.toLowerCase().includes(texto));
 
             todosLosMovimientos = data;
-            movimientosFiltrados = [...data];
-
             renderTabla(data);
             renderGraficas(data);
             actualizarTarjetas(data);
-
         } catch (err) {
-            console.error('Error filtrando:', err);
+            console.error(err);
         } finally {
             btn.disabled = false;
             btn.textContent = 'Filtrar';
         }
     });
 
-    // ─── LIMPIAR FILTROS ──────────────────────────────────────────────
     document.getElementById('btn-limpiar').addEventListener('click', () => {
-        document.getElementById('filtro-tipo').value     = '';
+        document.getElementById('filtro-tipo').value = '';
         document.getElementById('filtro-producto').value = '';
-        document.getElementById('filtro-texto').value    = '';
+        document.getElementById('filtro-texto').value = '';
         document.getElementById('btn-filtrar').click();
     });
 
-    // ─── RENDER TABLA ─────────────────────────────────────────────────
     function renderTabla(data) {
         const tbody = document.getElementById('tbody-movimientos');
         const vacia = document.getElementById('tabla-vacia');
         const count = document.getElementById('count-label');
-
         count.textContent = `${data.length} movimiento${data.length !== 1 ? 's' : ''}`;
 
         if (data.length === 0) {
@@ -291,74 +308,61 @@ const productosJSON   = JSON.stringify(productos);
 
         vacia.style.display = 'none';
         tbody.innerHTML = data.map(m => {
-            const fecha  = new Date(m.fecha).toLocaleString('es-CO');
-            const nombre = m.producto?.nombre ?? '—';
-            const tipo   = m.tipo === 'ENTRADA' ? '▲ ENTRADA' : '▼ SALIDA';
-            const clase  = m.tipo === 'ENTRADA' ? 'tipo-entrada' : 'tipo-salida';
-            const user   = m.usuario?.username ?? 'sistema';
+            const fecha = new Date(m.fecha).toLocaleString('es-CO');
+            const tipo = getTipoVisual(m);
+            const clase = tipo === 'AJUSTE' ? 'tipo-ajuste' : (tipo === 'ENTRADA' ? 'tipo-entrada' : 'tipo-salida');
             return `
                 <tr>
                     <td class="mono" style="font-size:12px;color:var(--text-muted)">${fecha}</td>
-                    <td><strong>${nombre}</strong></td>
+                    <td><strong>${m.producto?.nombre ?? '—'}</strong></td>
                     <td><span class="tipo-badge ${clase}">${tipo}</span></td>
                     <td class="mono"><strong>${m.cantidad}</strong></td>
                     <td class="mono" style="color:var(--text-muted)">${m.stockAnterior}</td>
                     <td class="mono">${m.stockNuevo}</td>
-                    <td style="color:var(--text-muted);font-size:13px">@${user}</td>
+                    <td style="font-size:12px">${m.motivo ?? '—'}</td>
+                    <td style="color:var(--text-muted);font-size:13px">@${m.usuario?.username ?? 'sistema'}</td>
                 </tr>`;
         }).join('');
     }
 
-    // ─── ACTUALIZAR TARJETAS ──────────────────────────────────────────
     function actualizarTarjetas(data) {
-        const entradas = data.filter(m => m.tipo === 'ENTRADA').reduce((s, m) => s + m.cantidad, 0);
-        const salidas  = data.filter(m => m.tipo === 'SALIDA').reduce((s, m) => s + m.cantidad, 0);
-        const balance  = entradas - salidas;
+        const entradas = data.filter(isEntrada).reduce((s, m) => s + m.cantidad, 0);
+        const salidas = data.filter(isSalida).reduce((s, m) => s + m.cantidad, 0);
+        const balance = entradas - salidas;
 
-        document.getElementById('stat-total').textContent    = data.length;
+        document.getElementById('stat-total').textContent = data.length;
         document.getElementById('stat-entradas').textContent = entradas;
-        document.getElementById('stat-salidas').textContent  = salidas;
-        document.getElementById('stat-balance').textContent  = (balance >= 0 ? '+' : '') + balance;
-        document.getElementById('stat-balance').style.color  = balance >= 0 ? 'var(--success)' : 'var(--primary)';
+        document.getElementById('stat-salidas').textContent = salidas;
+        document.getElementById('stat-balance').textContent = `${balance >= 0 ? '+' : ''}${balance}`;
+        document.getElementById('stat-balance').style.color = balance >= 0 ? 'var(--success)' : 'var(--primary)';
     }
 
-    // ─── RENDER GRÁFICAS ──────────────────────────────────────────────
     function renderGraficas(data) {
         renderLineaHistorico(data);
         renderBarrasProductos(data);
     }
 
-    // Gráfica de línea: entradas vs salidas agrupadas por día
     function renderLineaHistorico(data) {
-        const fmt = (fecha) => {
+        const porDia = {};
+        const labelFor = (fecha) => {
             const d = new Date(fecha);
-            return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}`;
+            return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`;
         };
 
-        // Agrupar por día
-        const porDia = {};
         data.forEach(m => {
-            const dia = fmt(m.fecha);
+            const dia = labelFor(m.fecha);
             if (!porDia[dia]) porDia[dia] = { entradas: 0, salidas: 0 };
-            if (m.tipo === 'ENTRADA') porDia[dia].entradas += m.cantidad;
-            else                     porDia[dia].salidas  += m.cantidad;
+            if (isEntrada(m)) porDia[dia].entradas += m.cantidad;
+            else if (isSalida(m)) porDia[dia].salidas += m.cantidad;
         });
 
-        // Ordenar por fecha (el formato dd/MM es ordenable lexicográficamente dentro del mes)
-        const dias      = Object.keys(porDia).sort();
-        const entradas  = dias.map(d => porDia[d].entradas);
-        const salidas   = dias.map(d => porDia[d].salidas);
-
+        const dias = Object.keys(porDia).sort();
+        const entradas = dias.map(d => porDia[d].entradas);
+        const salidas = dias.map(d => porDia[d].salidas);
         const canvas = document.getElementById('chart-linea-historico');
         if (!canvas) return;
-
-        // Destruir chart anterior para evitar "Canvas already in use"
-        if (chartLinea) { chartLinea.destroy(); chartLinea = null; }
-
-        if (dias.length === 0) {
-            canvas.parentElement.innerHTML = '<p class="chart-empty">Sin datos para el período seleccionado.</p>';
-            return;
-        }
+        if (chartLinea) chartLinea.destroy();
+        if (!dias.length) return;
 
         chartLinea = new Chart(canvas.getContext('2d'), {
             type: 'line',
@@ -374,7 +378,6 @@ const productosJSON   = JSON.stringify(productos);
                         tension: 0.3,
                         fill: true,
                         pointRadius: 4,
-                        pointHoverRadius: 6,
                         pointBackgroundColor: '#1D9E75',
                     },
                     {
@@ -386,7 +389,6 @@ const productosJSON   = JSON.stringify(productos);
                         tension: 0.3,
                         fill: true,
                         pointRadius: 4,
-                        pointHoverRadius: 6,
                         pointBackgroundColor: '#D84910',
                     }
                 ]
@@ -394,37 +396,11 @@ const productosJSON   = JSON.stringify(productos);
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
-                interaction: { mode: 'index', intersect: false },
                 scales: {
                     y: {
                         beginAtZero: true,
-                        grid: { color: 'rgba(0,0,0,0.04)' },
-                        border: { display: false },
                         ticks: {
-                            font: { size: 11, family: "'DM Sans', sans-serif" },
-                            color: '#888880',
                             callback: v => Number.isInteger(v) ? v : null,
-                        }
-                    },
-                    x: {
-                        grid: { display: false },
-                        border: { display: false },
-                        ticks: {
-                            font: { size: 11, family: "'DM Sans', sans-serif" },
-                            color: '#888880',
-                            maxTicksLimit: 15,
-                        }
-                    }
-                },
-                plugins: {
-                    legend: {
-                        position: 'bottom',
-                        labels: {
-                            padding: 16,
-                            font: { size: 12, family: "'DM Sans', sans-serif" },
-                            color: '#888880',
-                            usePointStyle: true,
-                            pointStyleWidth: 8,
                         }
                     }
                 }
@@ -432,18 +408,15 @@ const productosJSON   = JSON.stringify(productos);
         });
     }
 
-    // Gráfica de barras: top 8 productos por volumen total (entradas + salidas)
     function renderBarrasProductos(data) {
-        // Agrupar por producto
         const porProducto = {};
         data.forEach(m => {
             const nombre = m.producto?.nombre ?? 'Sin nombre';
             if (!porProducto[nombre]) porProducto[nombre] = { entradas: 0, salidas: 0 };
-            if (m.tipo === 'ENTRADA') porProducto[nombre].entradas += m.cantidad;
-            else                     porProducto[nombre].salidas  += m.cantidad;
+            if (isEntrada(m)) porProducto[nombre].entradas += m.cantidad;
+            else if (isSalida(m)) porProducto[nombre].salidas += m.cantidad;
         });
 
-        // Ordenar por volumen total y tomar los top 8
         const sorted = Object.entries(porProducto)
             .map(([nombre, v]) => ({ nombre, ...v, total: v.entradas + v.salidas }))
             .sort((a, b) => b.total - a.total)
@@ -451,247 +424,51 @@ const productosJSON   = JSON.stringify(productos);
 
         const canvas = document.getElementById('chart-barras-productos');
         if (!canvas) return;
-
-        if (chartBarras) { chartBarras.destroy(); chartBarras = null; }
-
-        if (sorted.length === 0) {
-            canvas.parentElement.innerHTML = '<p class="chart-empty">Sin datos para el período seleccionado.</p>';
-            return;
-        }
+        if (chartBarras) chartBarras.destroy();
+        if (!sorted.length) return;
 
         chartBarras = new Chart(canvas.getContext('2d'), {
             type: 'bar',
             data: {
                 labels: sorted.map(p => p.nombre),
                 datasets: [
-                    {
-                        label: 'Entradas',
-                        data: sorted.map(p => p.entradas),
-                        backgroundColor: 'rgba(29,158,117,0.75)',
-                        borderRadius: 4,
-                        borderSkipped: false,
-                    },
-                    {
-                        label: 'Salidas',
-                        data: sorted.map(p => p.salidas),
-                        backgroundColor: 'rgba(216,73,16,0.75)',
-                        borderRadius: 4,
-                        borderSkipped: false,
-                    }
+                    { label: 'Entradas', data: sorted.map(p => p.entradas), backgroundColor: 'rgba(29,158,117,0.75)' },
+                    { label: 'Salidas', data: sorted.map(p => p.salidas), backgroundColor: 'rgba(216,73,16,0.75)' }
                 ]
             },
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
-                // Barras agrupadas (no apiladas) para comparar entradas y salidas
-                // de cada producto directamente
-                scales: {
-                    y: {
-                        beginAtZero: true,
-                        grid: { color: 'rgba(0,0,0,0.04)' },
-                        border: { display: false },
-                        ticks: {
-                            font: { size: 11, family: "'DM Sans', sans-serif" },
-                            color: '#888880',
-                            callback: v => Number.isInteger(v) ? v : null,
-                        }
-                    },
-                    x: {
-                        grid: { display: false },
-                        border: { display: false },
-                        ticks: {
-                            font: { size: 11, family: "'DM Sans', sans-serif" },
-                            color: '#888880',
-                            // Truncar nombres largos para que quepan
-                            callback: function(val) {
-                                const label = this.getLabelForValue(val);
-                                return label.length > 12 ? label.substring(0, 12) + '…' : label;
-                            }
-                        }
-                    }
-                },
-                plugins: {
-                    legend: {
-                        position: 'bottom',
-                        labels: {
-                            padding: 16,
-                            font: { size: 12, family: "'DM Sans', sans-serif" },
-                            color: '#888880',
-                            usePointStyle: true,
-                            pointStyleWidth: 8,
-                        }
-                    },
-                    tooltip: {
-                        callbacks: {
-                            // Mostrar el nombre completo en el tooltip aunque esté truncado en el eje
-                            title: (items) => items[0].label,
-                        }
-                    }
-                }
             }
         });
     }
 </script>
 
 <style>
-    /* ─── FILTROS ──────────────────────────────────────────────────── */
-
-    .filtros-card {
-        background: white;
-        border: 1px solid var(--border);
-        border-radius: var(--radius);
-        padding: 20px 24px;
-        margin-bottom: 24px;
-    }
-
-    .filtros-grid {
-        display: grid;
-        grid-template-columns: 1fr 1fr 1fr 1fr 1fr auto;
-        gap: 16px;
-        align-items: end;
-    }
-
-    .form-group {
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-    }
-
-    .form-group-actions {
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-    }
-
-    label {
-        font-size: 11px;
-        font-weight: 700;
-        color: var(--text-muted);
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-        font-family: var(--font-mono);
-    }
-
-    input[type="date"],
-    input[type="text"],
-    select {
-        padding: 8px 12px;
-        border: 1px solid var(--border);
-        border-radius: var(--radius);
-        font-family: var(--font-sans);
-        font-size: 13px;
-        color: var(--text);
-        background: white;
-        transition: border-color 0.15s;
-        height: 36px;
-    }
-
-    input:focus, select:focus {
-        outline: none;
-        border-color: var(--primary);
-        box-shadow: 0 0 0 3px var(--primary-dim);
-    }
-
-    /* ─── GRÁFICAS ─────────────────────────────────────────────────── */
-
-    .charts-grid {
-        display: grid;
-        grid-template-columns: 3fr 2fr;
-        gap: 20px;
-    }
-
-    .chart-card {
-        background: white;
-        border: 1px solid var(--border);
-        border-radius: var(--radius);
-        padding: 24px;
-    }
-
-    .chart-title {
-        font-family: var(--font-mono);
-        font-size: 10px;
-        font-weight: 700;
-        letter-spacing: 1.5px;
-        text-transform: uppercase;
-        color: var(--text-muted);
-        margin-bottom: 16px;
-    }
-
-    /* Más alta que el dashboard para mayor detalle */
-    .chart-container-tall {
-        position: relative;
-        height: 300px;
-    }
-
-    .chart-empty {
-        color: var(--text-muted);
-        font-size: 13px;
-        text-align: center;
-        padding: 60px 0;
-    }
-
-    /* ─── TABLA ────────────────────────────────────────────────────── */
-
-    .table-toolbar {
-        padding: 12px 20px;
-        border-bottom: 1px solid var(--border);
-        background: var(--light);
-        border-radius: var(--radius) var(--radius) 0 0;
-    }
-
-    .count-label {
-        font-family: var(--font-mono);
-        font-size: 11px;
-        color: var(--text-muted);
-        letter-spacing: 0.5px;
-    }
-
-    .tipo-badge {
-        display: inline-block;
-        padding: 3px 8px;
-        border-radius: 4px;
-        font-size: 11px;
-        font-weight: 700;
-        font-family: var(--font-mono);
-        letter-spacing: 0.3px;
-    }
-
-    .tipo-entrada {
-        background: var(--success-bg);
-        color: var(--success);
-    }
-
-    .tipo-salida {
-        background: var(--error-bg);
-        color: var(--error);
-    }
-
-    .tabla-vacia {
-        padding: 40px;
-        text-align: center;
-        color: var(--text-muted);
-        font-size: 14px;
-    }
-
-    .mono {
-        font-family: var(--font-mono);
-        font-size: 13px;
-    }
-
-    /* ─── RESPONSIVE ───────────────────────────────────────────────── */
-
+    .actions-header-group { display: flex; gap: 8px; }
+    .filtros-card { background: white; border: 1px solid var(--border); border-radius: var(--radius); padding: 20px 24px; margin-bottom: 24px; }
+    .filtros-grid { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr 1fr auto; gap: 16px; align-items: end; }
+    .form-group { display: flex; flex-direction: column; gap: 6px; }
+    .form-group-actions { display: flex; flex-direction: column; gap: 6px; }
+    label { font-size: 11px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; font-family: var(--font-mono); }
+    input[type="date"], input[type="text"], select { padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--radius); font-size: 13px; height: 36px; }
+    .charts-grid { display: grid; grid-template-columns: 3fr 2fr; gap: 20px; }
+    .chart-card { background: white; border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; }
+    .chart-title { font-family: var(--font-mono); font-size: 10px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-muted); margin-bottom: 16px; }
+    .chart-container-tall { position: relative; height: 300px; }
+    .table-toolbar { padding: 12px 20px; border-bottom: 1px solid var(--border); background: var(--light); border-radius: var(--radius) var(--radius) 0 0; }
+    .count-label { font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); letter-spacing: 0.5px; }
+    .tipo-badge { display: inline-block; padding: 3px 8px; border-radius: 4px; font-size: 11px; font-weight: 700; font-family: var(--font-mono); letter-spacing: 0.3px; }
+    .tipo-entrada { background: var(--success-bg); color: var(--success); }
+    .tipo-salida { background: var(--error-bg); color: var(--error); }
+    .tipo-ajuste { background: var(--warning-bg); color: var(--warning); }
+    .tabla-vacia { padding: 40px; text-align: center; color: var(--text-muted); font-size: 14px; }
+    .mono { font-family: var(--font-mono); font-size: 13px; }
     @media (max-width: 1100px) {
-        .filtros-grid {
-            grid-template-columns: 1fr 1fr 1fr;
-        }
-        .charts-grid {
-            grid-template-columns: 1fr;
-        }
+        .filtros-grid { grid-template-columns: 1fr 1fr 1fr; }
+        .charts-grid { grid-template-columns: 1fr; }
     }
-
     @media (max-width: 700px) {
-        .filtros-grid {
-            grid-template-columns: 1fr 1fr;
-        }
+        .filtros-grid { grid-template-columns: 1fr 1fr; }
     }
 </style>

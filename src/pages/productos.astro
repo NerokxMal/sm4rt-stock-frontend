@@ -1,24 +1,57 @@
 ---
 import Layout from '../layouts/Layout.astro';
-import { productosAPI, categoriasAPI } from '../lib/api';
+import { hasPermission, parsePermissions } from '../lib/session';
 
-const roleCookie = Astro.cookies.get('role')?.value ?? 'USER';
-const esAdmin = roleCookie === 'ADMIN';
+const API_URL = import.meta.env.PUBLIC_API_URL ?? 'http://localhost:8080';
+const token = Astro.cookies.get('token')?.value ?? '';
+const role = Astro.cookies.get('role')?.value;
+const permissions = parsePermissions(Astro.cookies.get('permissions')?.value, role);
 
-const [productos, categorias] = await Promise.all([
-    productosAPI.obtenerTodos(),
-    categoriasAPI.obtenerTodas(),
-]);
+const canView = hasPermission(permissions, 'PRODUCT_VIEW');
+const canCreate = hasPermission(permissions, 'PRODUCT_CREATE');
+const canEditStock = hasPermission(permissions, 'PRODUCT_STOCK_EDIT');
+const canDelete = hasPermission(permissions, 'PRODUCT_DELETE');
+const canExport = hasPermission(permissions, 'DATA_EXPORT');
+const canViewHistory = hasPermission(permissions, 'HISTORY_VIEW');
+const canSeeActions = canEditStock || canDelete || canViewHistory;
+
+if (!canView) {
+    return Astro.redirect('/');
+}
+
+let productos: any[] = [];
+let categorias: any[] = [];
+
+try {
+    const [prodResp, catResp] = await Promise.all([
+        fetch(`${API_URL}/productos`, { headers: { Authorization: `Bearer ${token}` } }),
+        fetch(`${API_URL}/categorias`, { headers: { Authorization: `Bearer ${token}` } }),
+    ]);
+    if (prodResp.ok) productos = await prodResp.json();
+    if (catResp.ok) categorias = await catResp.json();
+} catch (e) {
+    console.error('No se pudo cargar productos/categorías:', e);
+}
 
 const productosJSON = JSON.stringify(productos);
 const categoriasJSON = JSON.stringify(categorias);
 ---
 
 <Layout title="Productos" activePage="productos">
-    {esAdmin && (
-            <button class="btn btn-primary" id="btn-nuevo" slot="actions">
-                + Nuevo producto
-            </button>
+    {(canCreate || canExport) && (
+        <div slot="actions" class="actions-header-group">
+            {canExport && (
+                <>
+                    <button class="btn" id="btn-export-csv">Exportar CSV</button>
+                    <button class="btn" id="btn-export-pdf">Exportar PDF</button>
+                </>
+            )}
+            {canCreate && (
+                <button class="btn btn-primary" id="btn-nuevo">
+                    + Nuevo producto
+                </button>
+            )}
+        </div>
     )}
 
     <div id="alert-container" class="alert" style="display:none;"></div>
@@ -32,7 +65,8 @@ const categoriasJSON = JSON.stringify(categorias);
                 <th>Categoría</th>
                 <th>Precio</th>
                 <th>Stock</th>
-                {esAdmin && <th>Acciones</th>}
+                <th>Umbral</th>
+                {canSeeActions && <th>Acciones</th>}
             </tr>
             </thead>
             <tbody>
@@ -52,29 +86,36 @@ const categoriasJSON = JSON.stringify(categorias);
                             }).format(p.precio)}
                         </td>
                         <td>
-                            <span class={p.stock < 5 ? 'stock-low' : 'stock-ok'}>
+                            <span class={p.stock <= (p.umbralCritico ?? 5) ? 'stock-low' : 'stock-ok'}>
                                 {p.stock}
                             </span>
                         </td>
-                        {esAdmin && (
-                                <td>
-                                    <div class="actions-cell">
+                        <td class="mono">{p.umbralCritico ?? 5}</td>
+                        {canSeeActions && (
+                            <td>
+                                <div class="actions-cell">
+                                    {canEditStock && (
                                         <button class="btn btn-edit btn-sm" data-id={p.id} data-action="edit">
                                             Editar
                                         </button>
+                                    )}
+                                    {canDelete && (
                                         <button class="btn btn-danger btn-sm" data-id={p.id} data-action="delete">
                                             Eliminar
                                         </button>
-                                        <button
-                                                class="btn btn-sm btn-historial"
-                                                data-id={p.id}
-                                                data-action="historial"
-                                                data-nombre={p.nombre}
-                                        >
+                                    )}
+                                    {canEditStock && (
+                                        <button class="btn btn-sm btn-ajustar" data-id={p.id} data-action="adjust" data-nombre={p.nombre}>
+                                            Ajustar stock
+                                        </button>
+                                    )}
+                                    {canViewHistory && (
+                                        <button class="btn btn-sm btn-historial" data-id={p.id} data-action="historial" data-nombre={p.nombre}>
                                             Historial
                                         </button>
-                                    </div>
-                                </td>
+                                    )}
+                                </div>
+                            </td>
                         )}
                     </tr>
             ))}
@@ -83,8 +124,7 @@ const categoriasJSON = JSON.stringify(categorias);
     </div>
 </Layout>
 
-{esAdmin && (
-    <!-- MODAL PRINCIPAL PRODUCTOS -->
+{(canCreate || canEditStock) && (
 <div id="modal" class="modal-overlay" style="display:none;">
     <div class="modal-box">
         <div class="modal-header">
@@ -104,21 +144,27 @@ const categoriasJSON = JSON.stringify(categorias);
             <div class="form-row">
                 <div class="form-group">
                     <label for="precio">Precio *</label>
-                    <input type="number" id="precio" step="0.01" min="0" required />
+                    <input type="number" id="precio" step="0.01" min="0.01" required />
                 </div>
                 <div class="form-group">
                     <label for="stock">Stock *</label>
                     <input type="number" id="stock" min="0" required />
                 </div>
             </div>
-            <div class="form-group">
-                <label for="categoria-select">Categoría</label>
-                <select id="categoria-select">
-                    <option value="">Sin categoría</option>
-                    {categorias.map(c => (
-                            <option value={c.id}>{c.nombre}</option>
-                    ))}
-                </select>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="umbral">Umbral crítico *</label>
+                    <input type="number" id="umbral" min="0" value="5" required />
+                </div>
+                <div class="form-group">
+                    <label for="categoria-select">Categoría</label>
+                    <select id="categoria-select">
+                        <option value="">Sin categoría</option>
+                        {categorias.map(c => (
+                                <option value={c.id}>{c.nombre}</option>
+                        ))}
+                    </select>
+                </div>
             </div>
             <div class="form-actions">
                 <button type="button" id="btn-cancelar" class="btn">Cancelar</button>
@@ -127,184 +173,316 @@ const categoriasJSON = JSON.stringify(categorias);
         </form>
     </div>
 </div>
+)}
 
-    <!-- MODAL HISTORIAL (Separado del principal para evitar conflictos de z-index) -->
-<div id="modal-historial" class="modal-overlay" style="display:none;">
-    <div class="modal-box" style="max-width:600px;">
+{canEditStock && (
+<div id="modal-ajuste" class="modal-overlay" style="display:none;">
+    <div class="modal-box">
         <div class="modal-header">
-            <h2 id="historial-title" class="modal-title">Historial</h2>
-            <button id="historial-close" class="modal-close">✕</button>
+            <h2 id="ajuste-title" class="modal-title">Ajustar stock</h2>
+            <button id="ajuste-close" class="modal-close" type="button">✕</button>
         </div>
-        <div id="historial-content" style="max-height:450px; overflow-y:auto; border-top: 1px solid var(--border)">
-            <!-- Contenido dinámico -->
-        </div>
+        <form id="ajuste-form" class="form">
+            <input type="hidden" id="ajuste-producto-id" />
+            <div class="form-group">
+                <label for="ajuste-cantidad">Cantidad (+ / -) *</label>
+                <input type="number" id="ajuste-cantidad" required />
+            </div>
+            <div class="form-group">
+                <label for="ajuste-motivo">Motivo *</label>
+                <input type="text" id="ajuste-motivo" required />
+            </div>
+            <div class="form-actions">
+                <button type="button" id="ajuste-cancelar" class="btn">Cancelar</button>
+                <button type="submit" class="btn btn-primary">Aplicar ajuste</button>
+            </div>
+        </form>
     </div>
 </div>
-    )}
+)}
 
-<script is:inline define:vars={{ productosJSON, categoriasJSON, esAdmin }}>
-    if (esAdmin) {
-        const apiUrl = 'http://localhost:8080';
-        const productos = JSON.parse(productosJSON);
-        const token = localStorage.getItem('token') || '';
+{canViewHistory && (
+<div id="modal-historial" class="modal-overlay" style="display:none;">
+    <div class="modal-box" style="max-width:700px;">
+        <div class="modal-header">
+            <h2 id="historial-title" class="modal-title">Historial</h2>
+            <button id="historial-close" class="modal-close" type="button">✕</button>
+        </div>
+        <div id="historial-content" style="max-height:450px; overflow-y:auto; border-top: 1px solid var(--border)"></div>
+    </div>
+</div>
+)}
 
+<script
+    is:inline
+    define:vars={{
+        apiUrl: API_URL,
+        productosJSON,
+        canCreate,
+        canEditStock,
+        canDelete,
+        canExport,
+        canViewHistory
+    }}>
+    const token = localStorage.getItem('token') || '';
+    const productos = JSON.parse(productosJSON);
+
+    const alertContainer = document.getElementById('alert-container');
+    const showAlert = (message, type = 'error') => {
+        alertContainer.textContent = message;
+        alertContainer.className = `alert alert-${type}`;
+        alertContainer.style.display = 'block';
+        setTimeout(() => { alertContainer.style.display = 'none'; }, 3500);
+    };
+
+    if (canExport) {
+        const download = async (format) => {
+            try {
+                const resp = await fetch(`${apiUrl}/productos/export?format=${format}`, {
+                    headers: { Authorization: `Bearer ${token}` }
+                });
+                if (!resp.ok) {
+                    const err = await resp.json().catch(() => ({}));
+                    throw new Error(err.error ?? 'No se pudo exportar');
+                }
+                const blob = await resp.blob();
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = `productos.${format}`;
+                link.click();
+                URL.revokeObjectURL(url);
+            } catch (err) {
+                showAlert(err.message);
+            }
+        };
+
+        document.getElementById('btn-export-csv')?.addEventListener('click', () => download('csv'));
+        document.getElementById('btn-export-pdf')?.addEventListener('click', () => download('pdf'));
+    }
+
+    if (canCreate || canEditStock) {
         const modal = document.getElementById('modal');
-        const modalHistorial = document.getElementById('modal-historial');
         const form = document.getElementById('producto-form');
 
-        // Cerrar Historial
-        document.getElementById('historial-close')?.addEventListener('click', () => {
-            modalHistorial.style.display = 'none';
-        });
-
-        const abrirModal = () => { if (modal) modal.style.display = 'flex'; };
-        const cerrarModal = () => {
-            if (modal) modal.style.display = 'none';
+        const openModal = () => { modal.style.display = 'flex'; };
+        const closeModal = () => {
+            modal.style.display = 'none';
             form?.reset();
             document.getElementById('producto-id').value = '';
+            document.getElementById('modal-title').textContent = 'Nuevo Producto';
+            document.getElementById('umbral').value = '5';
         };
 
         document.getElementById('btn-nuevo')?.addEventListener('click', () => {
             document.getElementById('modal-title').textContent = 'Nuevo Producto';
-            cerrarModal();
-            abrirModal();
+            closeModal();
+            openModal();
         });
 
-        document.getElementById('btn-cancelar')?.addEventListener('click', cerrarModal);
-        document.getElementById('modal-close')?.addEventListener('click', cerrarModal);
-
-        // Delegación de eventos para la tabla
-        document.addEventListener('click', async (e) => {
-            const btn = e.target.closest('[data-action]');
-            if (!btn) return;
-
-            const id = btn.dataset.id;
-            const action = btn.dataset.action;
-
-            if (action === 'edit') {
-                const p = productos.find(x => x.id == id);
-                if (!p) return;
-                document.getElementById('modal-title').textContent = 'Editar Producto';
-                document.getElementById('producto-id').value = p.id;
-                document.getElementById('nombre').value = p.nombre;
-                document.getElementById('descripcion').value = p.descripcion || '';
-                document.getElementById('precio').value = p.precio;
-                document.getElementById('stock').value = p.stock;
-                document.getElementById('categoria-select').value = p.categoria?.id || '';
-                abrirModal();
-            }
-
-            else if (action === 'delete') {
-                if (confirm('¿Eliminar este producto?')) eliminarProducto(id);
-            }
-
-            // INTEGRACIÓN DEL HISTORIAL
-            else if (action === 'historial') {
-                const nombre = btn.dataset.nombre;
-                const titleElem = document.getElementById('historial-title');
-                const contentElem = document.getElementById('historial-content');
-
-                titleElem.textContent = `Historial — ${nombre}`;
-                contentElem.innerHTML = '<p style="padding:24px; color:var(--text-muted); text-align:center">Cargando movimientos...</p>';
-                modalHistorial.style.display = 'flex';
-
-                try {
-                    const resp = await fetch(`${apiUrl}/movimientos/producto/${id}`, {
-                        headers: { 'Authorization': `Bearer ${token}` }
-                    });
-                    const movimientos = await resp.json();
-
-                    if (!movimientos || movimientos.length === 0) {
-                        contentElem.innerHTML = '<p style="padding:24px; color:var(--text-muted); text-align:center">Sin movimientos registrados.</p>';
-                        return;
-                    }
-
-                    const filas = movimientos.map(m => {
-                        const fecha = new Date(m.fecha).toLocaleString('es-CO');
-                        const tipo = m.tipo === 'ENTRADA' ? '▲' : '▼';
-                        const color = m.tipo === 'ENTRADA' ? 'var(--success)' : 'var(--primary)';
-                        const usuario = m.usuario?.username ?? 'sistema';
-                        return `
-                            <tr style="border-bottom:1px solid #eee">
-                                <td style="padding:12px 16px; font-size:13px; color:var(--text-muted)">${fecha}</td>
-                                <td style="padding:12px 16px; font-weight:600; color:${color}">${tipo} ${m.cantidad}</td>
-                                <td style="padding:12px 16px; font-size:13px">${m.stockAnterior} → ${m.stockNuevo}</td>
-                                <td style="padding:12px 16px; font-size:12px; color:var(--text-muted)">${usuario}</td>
-                            </tr>`;
-                    }).join('');
-
-                    contentElem.innerHTML = `
-                        <table style="width:100%; border-collapse:collapse">
-                            <thead style="background:#f9f9f9; position:sticky; top:0">
-                                <tr>
-                                    <th style="padding:10px 16px; text-align:left; font-size:11px; color:#888; font-family:var(--font-mono)">FECHA</th>
-                                    <th style="padding:10px 16px; text-align:left; font-size:11px; color:#888; font-family:var(--font-mono)">CAMBIO</th>
-                                    <th style="padding:10px 16px; text-align:left; font-size:11px; color:#888; font-family:var(--font-mono)">STOCK</th>
-                                    <th style="padding:10px 16px; text-align:left; font-size:11px; color:#888; font-family:var(--font-mono)">USUARIO</th>
-                                </tr>
-                            </thead>
-                            <tbody>${filas}</tbody>
-                        </table>`;
-                } catch (err) {
-                    contentElem.innerHTML = '<p style="padding:24px; color:var(--primary)">Error al cargar el historial.</p>';
-                }
-            }
-        });
-
-        const eliminarProducto = async (id) => {
-            try {
-                const res = await fetch(`${apiUrl}/productos/${id}`, {
-                    method: 'DELETE',
-                    headers: { 'Authorization': `Bearer ${token}` }
-                });
-                if (res.ok) window.location.reload();
-            } catch (err) {
-                alert('Error al eliminar');
-            }
-        };
+        document.getElementById('btn-cancelar')?.addEventListener('click', closeModal);
+        document.getElementById('modal-close')?.addEventListener('click', closeModal);
 
         form?.addEventListener('submit', async (e) => {
             e.preventDefault();
             const id = document.getElementById('producto-id').value;
             const catId = document.getElementById('categoria-select').value;
-            const data = {
-                nombre: document.getElementById('nombre').value,
-                descripcion: document.getElementById('descripcion').value,
-                precio: parseFloat(document.getElementById('precio').value),
-                stock: parseInt(document.getElementById('stock').value),
-                categoria: catId ? { id: parseInt(catId) } : null
+
+            const payload = {
+                nombre: document.getElementById('nombre').value.trim(),
+                descripcion: document.getElementById('descripcion').value.trim(),
+                precio: Number.parseFloat(document.getElementById('precio').value),
+                stock: Number.parseInt(document.getElementById('stock').value, 10),
+                umbralCritico: Number.parseInt(document.getElementById('umbral').value, 10),
+                categoria: catId ? { id: Number.parseInt(catId, 10) } : null
             };
 
             try {
-                const url = id ? `${apiUrl}/productos/${id}` : `${apiUrl}/productos`;
-                const res = await fetch(url, {
+                const resp = await fetch(`${apiUrl}/productos${id ? `/${id}` : ''}`, {
                     method: id ? 'PUT' : 'POST',
-                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-                    body: JSON.stringify(data)
+                    headers: {
+                        'Content-Type': 'application/json',
+                        Authorization: `Bearer ${token}`
+                    },
+                    body: JSON.stringify(payload)
                 });
-                if (res.ok) window.location.reload();
+                if (!resp.ok) {
+                    const err = await resp.json().catch(() => ({}));
+                    throw new Error(err.error ?? 'No se pudo guardar el producto');
+                }
+                window.location.reload();
             } catch (err) {
-                alert('Error al guardar');
+                showAlert(err.message);
             }
         });
     }
+
+    if (canEditStock) {
+        const modalAjuste = document.getElementById('modal-ajuste');
+        const formAjuste = document.getElementById('ajuste-form');
+
+        const closeAjuste = () => {
+            modalAjuste.style.display = 'none';
+            formAjuste.reset();
+        };
+
+        document.getElementById('ajuste-cancelar')?.addEventListener('click', closeAjuste);
+        document.getElementById('ajuste-close')?.addEventListener('click', closeAjuste);
+
+        formAjuste?.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const id = document.getElementById('ajuste-producto-id').value;
+            const cantidad = Number.parseInt(document.getElementById('ajuste-cantidad').value, 10);
+            const motivo = document.getElementById('ajuste-motivo').value.trim();
+
+            try {
+                const resp = await fetch(`${apiUrl}/productos/${id}/ajustar-stock`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        Authorization: `Bearer ${token}`
+                    },
+                    body: JSON.stringify({ cantidad, motivo })
+                });
+                if (!resp.ok) {
+                    const err = await resp.json().catch(() => ({}));
+                    throw new Error(err.error ?? 'No se pudo aplicar el ajuste');
+                }
+                window.location.reload();
+            } catch (err) {
+                showAlert(err.message);
+            }
+        });
+    }
+
+    if (canViewHistory) {
+        document.getElementById('historial-close')?.addEventListener('click', () => {
+            document.getElementById('modal-historial').style.display = 'none';
+        });
+    }
+
+    document.addEventListener('click', async (e) => {
+        const btn = e.target.closest('[data-action]');
+        if (!btn) return;
+
+        const id = btn.dataset.id;
+        const action = btn.dataset.action;
+
+        if (action === 'edit' && (canCreate || canEditStock)) {
+            const p = productos.find(x => x.id == id);
+            if (!p) return;
+            document.getElementById('modal-title').textContent = 'Editar Producto';
+            document.getElementById('producto-id').value = p.id;
+            document.getElementById('nombre').value = p.nombre;
+            document.getElementById('descripcion').value = p.descripcion || '';
+            document.getElementById('precio').value = p.precio;
+            document.getElementById('stock').value = p.stock;
+            document.getElementById('umbral').value = p.umbralCritico ?? 5;
+            document.getElementById('categoria-select').value = p.categoria?.id || '';
+            document.getElementById('modal').style.display = 'flex';
+            return;
+        }
+
+        if (action === 'delete' && canDelete) {
+            if (!confirm('¿Eliminar este producto?')) return;
+            try {
+                const res = await fetch(`${apiUrl}/productos/${id}`, {
+                    method: 'DELETE',
+                    headers: { Authorization: `Bearer ${token}` }
+                });
+                if (!res.ok) {
+                    const err = await res.json().catch(() => ({}));
+                    throw new Error(err.error ?? 'No se pudo eliminar');
+                }
+                window.location.reload();
+            } catch (err) {
+                showAlert(err.message);
+            }
+            return;
+        }
+
+        if (action === 'adjust' && canEditStock) {
+            document.getElementById('ajuste-producto-id').value = id;
+            document.getElementById('ajuste-title').textContent = `Ajustar stock — ${btn.dataset.nombre}`;
+            document.getElementById('modal-ajuste').style.display = 'flex';
+            return;
+        }
+
+        if (action === 'historial' && canViewHistory) {
+            const nombre = btn.dataset.nombre;
+            const titleElem = document.getElementById('historial-title');
+            const contentElem = document.getElementById('historial-content');
+            titleElem.textContent = `Historial — ${nombre}`;
+            contentElem.innerHTML = '<p style="padding:24px; color:var(--text-muted); text-align:center">Cargando movimientos...</p>';
+            document.getElementById('modal-historial').style.display = 'flex';
+
+            try {
+                const resp = await fetch(`${apiUrl}/movimientos/producto/${id}`, {
+                    headers: { Authorization: `Bearer ${token}` }
+                });
+                if (!resp.ok) throw new Error('No se pudo cargar el historial');
+                const movimientos = await resp.json();
+
+                if (!movimientos || movimientos.length === 0) {
+                    contentElem.innerHTML = '<p style="padding:24px; color:var(--text-muted); text-align:center">Sin movimientos registrados.</p>';
+                    return;
+                }
+
+                const rows = movimientos.map(m => {
+                    const fecha = new Date(m.fecha).toLocaleString('es-CO');
+                    const isEntrada = m.tipo === 'ENTRADA' || (m.tipo === 'AJUSTE' && m.stockNuevo >= m.stockAnterior);
+                    const tipo = m.tipo === 'AJUSTE' ? 'AJUSTE' : (isEntrada ? 'ENTRADA' : 'SALIDA');
+                    const color = isEntrada ? 'var(--success)' : 'var(--primary)';
+                    const usuario = m.usuario?.username ?? 'sistema';
+                    return `
+                        <tr style="border-bottom:1px solid #eee">
+                            <td style="padding:12px 16px; font-size:13px; color:var(--text-muted)">${fecha}</td>
+                            <td style="padding:12px 16px; font-weight:600; color:${color}">${tipo}</td>
+                            <td style="padding:12px 16px; font-size:13px">${m.cantidad}</td>
+                            <td style="padding:12px 16px; font-size:13px">${m.stockAnterior} → ${m.stockNuevo}</td>
+                            <td style="padding:12px 16px; font-size:12px">${m.motivo ?? '—'}</td>
+                            <td style="padding:12px 16px; font-size:12px; color:var(--text-muted)">${usuario}</td>
+                        </tr>`;
+                }).join('');
+
+                contentElem.innerHTML = `
+                    <table style="width:100%; border-collapse:collapse">
+                        <thead style="background:#f9f9f9; position:sticky; top:0">
+                            <tr>
+                                <th style="padding:10px 16px; text-align:left; font-size:11px; color:#888">FECHA</th>
+                                <th style="padding:10px 16px; text-align:left; font-size:11px; color:#888">TIPO</th>
+                                <th style="padding:10px 16px; text-align:left; font-size:11px; color:#888">CANTIDAD</th>
+                                <th style="padding:10px 16px; text-align:left; font-size:11px; color:#888">STOCK</th>
+                                <th style="padding:10px 16px; text-align:left; font-size:11px; color:#888">MOTIVO</th>
+                                <th style="padding:10px 16px; text-align:left; font-size:11px; color:#888">USUARIO</th>
+                            </tr>
+                        </thead>
+                        <tbody>${rows}</tbody>
+                    </table>`;
+            } catch (err) {
+                contentElem.innerHTML = '<p style="padding:24px; color:var(--primary)">Error al cargar el historial.</p>';
+            }
+        }
+    });
 </script>
 
 <style>
-    /* ... Tus estilos anteriores ... */
-    .btn-historial {background:transparent;border:1px solid var(--border);color:var(--text-muted);
+    .actions-header-group {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
     }
-    .btn-historial:hover {
-        background: #f5f5f5;
-        border-color: #ccc;
-    }
-    /* Estilos base para que se vea igual que el código anterior */
+    .btn-historial { background: transparent; border: 1px solid var(--border); color: var(--text-muted); }
+    .btn-historial:hover { background: #f5f5f5; border-color: #ccc; }
+    .btn-ajustar { background: transparent; border: 1px solid #cfe0ff; color: #1b4db1; }
+    .btn-ajustar:hover { background: #edf4ff; }
     .id-badge { font-family: var(--font-mono), monospace; font-size: 12px; color: var(--text-muted); }
     .desc { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
     .mono { font-family: var(--font-mono), monospace; font-size: 13px; }
     .muted { color: var(--text-muted); }
     .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 200; }
-    .modal-box { background: white; border-radius: var(--radius); width: 90%; max-width: 480px; padding: 28px; }
+    .modal-box { background: white; border-radius: var(--radius); width: 90%; max-width: 520px; padding: 28px; }
     .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }
     .modal-title { font-family: var(--font-mono), monospace; font-size: 16px; font-weight: 700; }
     .form { display: flex; flex-direction: column; gap: 16px; }
@@ -313,4 +491,7 @@ const categoriasJSON = JSON.stringify(categorias);
     label { font-size: 13px; font-weight: 500; color: var(--text-muted); }
     input, select, textarea { padding: 9px 12px; border: 1px solid var(--border); border-radius: var(--radius); font-size: 14px; }
     .form-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 8px; }
+    @media (max-width: 760px) {
+        .form-row { grid-template-columns: 1fr; }
+    }
 </style>

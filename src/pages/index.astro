@@ -4,8 +4,23 @@
 // resultante.
 
 import Layout from '../layouts/Layout.astro';
+import { hasPermission, parsePermissions } from '../lib/session';
 
 const API_URL = import.meta.env.PUBLIC_API_URL ?? 'http://localhost:8080';
+const token = Astro.cookies.get('token')?.value;
+const role = Astro.cookies.get('role')?.value;
+const permissions = parsePermissions(Astro.cookies.get('permissions')?.value, role);
+const canDashboard = hasPermission(permissions, 'DASHBOARD_VIEW');
+const canProductos = hasPermission(permissions, 'PRODUCT_VIEW');
+const canCategorias = hasPermission(permissions, 'CATEGORY_VIEW');
+const canHistorico = hasPermission(permissions, 'HISTORY_VIEW');
+
+if (!canDashboard) {
+	if (canProductos) return Astro.redirect('/productos');
+	if (canCategorias) return Astro.redirect('/categorias');
+	if (canHistorico) return Astro.redirect('/historico');
+	return Astro.redirect('/login');
+}
 
 // Una sola petición al nuevo endpoint /dashboard/stats reemplaza las dos
 // llamadas separadas a /productos y /categorias que teníamos antes.
@@ -21,7 +36,11 @@ let stats = {
 };
 
 try {
-	const resp = await fetch(`${API_URL}/dashboard/stats`);
+	const resp = await fetch(`${API_URL}/dashboard/stats`, {
+		headers: {
+			Authorization: `Bearer ${token ?? ''}`
+		}
+	});
 	if (resp.ok) {
 		stats = await resp.json();
 	}

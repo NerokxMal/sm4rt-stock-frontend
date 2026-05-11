@@ -1,3 +1,5 @@
+import type { Permission } from './session';
+
 // ─── TIPOS ────────────────────────────────────────────────────────
 // TypeScript nos permite definir la "forma" de los objetos que
 // devuelve el backend. Si el backend cambia algo, TypeScript
@@ -8,6 +10,7 @@ export interface Categoria {
     id: number;
     nombre: string;
     descripcion: string | null; // | null significa que puede ser null
+    parent: { id: number; nombre: string } | null;
 }
 
 export interface Producto {
@@ -16,6 +19,7 @@ export interface Producto {
     descripcion: string | null;
     precio: number;
     stock: number;
+    umbralCritico: number | null;
     categoria: Categoria | null; // Un producto puede no tener categoría
 }
 
@@ -126,13 +130,13 @@ export const categoriasAPI = {
 // ─── AUTH ─────────────────────────────────────────────────────────
 export const authAPI = {
     login: (username: string, password: string) =>
-        fetchAPI<{ token: string }>('/auth/login', {
+        fetchAPI<{ token: string; role: string; permissions: Permission[] }>('/auth/login', {
             method: 'POST',
             body: JSON.stringify({ username, password }),
         }),
 
     register: (username: string, password: string) =>
-        fetchAPI<{ token: string }>('/auth/register', {
+        fetchAPI<{ token: string; role: string; permissions: Permission[] }>('/auth/register', {
             method: 'POST',
             body: JSON.stringify({ username, password }),
         }),
