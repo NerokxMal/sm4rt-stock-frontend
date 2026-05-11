@@ -4,7 +4,7 @@
 // el link activo en el sidebar.
 interface Props {
     title: string;
-    activePage: 'dashboard' | 'productos' | 'categorias';
+    activePage: 'dashboard' | 'productos' | 'categorias' | 'historico' | 'configuracion';
 }
 
 const { title, activePage } = Astro.props;
@@ -48,6 +48,17 @@ const { title, activePage } = Astro.props;
                 <span class="nav-icon">◉</span>
                 <span>Categorías</span>
             </a>
+            <a href="/historico" class={`nav-link ${activePage === 'historico' ? 'active' : ''}`}>
+                <span class="nav-icon">◎</span>
+                <span>Histórico</span>
+            </a>
+            <!-- Solo visible para ADMIN — leer la cookie de rol: -->
+            {Astro.cookies.get('role')?.value === 'ADMIN' && (
+                <a href="/configuracion" class={`nav-link ${activePage === 'configuracion' ? 'active' : ''}`}>
+                    <span class="nav-icon">⚙</span>
+                    <span>Configuración</span>
+                </a>
+                )}
         </nav>
 
         <div class="sidebar-footer">
