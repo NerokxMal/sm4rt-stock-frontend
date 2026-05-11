@@ -100,11 +100,15 @@ const API_URL = import.meta.env.PUBLIC_API_URL ?? 'http://localhost:8080';
         btnSubmit.textContent = 'Ingresando...';
 
         try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 25000);
             const response = await fetch(`${apiUrl}/auth/login`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ username, password }),
+                signal: controller.signal,
             });
+            clearTimeout(timeoutId);
 
             if (!response.ok) {
                 const data = await response.json();
@@ -130,7 +134,11 @@ const API_URL = import.meta.env.PUBLIC_API_URL ?? 'http://localhost:8080';
             window.location.href = '/';
 
         } catch (err) {
-            alertEl.textContent = err instanceof Error ? err.message : 'Error al iniciar sesión';
+            alertEl.textContent = err instanceof Error
+                ? (err.name === 'AbortError'
+                    ? 'El backend tardó demasiado en responder. Reintenta en unos segundos.'
+                    : err.message)
+                : 'Error al iniciar sesión';
             alertEl.style.display = 'block';
 
             btnSubmit.disabled = false;
