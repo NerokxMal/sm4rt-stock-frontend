@@ -22,3 +22,6 @@ sm4rt-stock-frontend.iml
 
 # jetbrains setting folder
 .idea/
+
+# Local Netlify folder
+.netlify
