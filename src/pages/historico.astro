@@ -112,7 +112,7 @@ const productosJSON = JSON.stringify(productos);
 
             <div class="form-group form-group-actions">
                 <label>&nbsp;</label>
-                <div style="display:flex; gap:8px;">
+                <div class="filtros-actions">
                     <button id="btn-filtrar" class="btn btn-primary">Filtrar</button>
                     <button id="btn-limpiar" class="btn">Limpiar</button>
                 </div>
@@ -445,9 +445,10 @@ const productosJSON = JSON.stringify(productos);
 </script>
 
 <style>
-    .actions-header-group { display: flex; gap: 8px; }
+    .actions-header-group { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
     .filtros-card { background: white; border: 1px solid var(--border); border-radius: var(--radius); padding: 20px 24px; margin-bottom: 24px; }
     .filtros-grid { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr 1fr auto; gap: 16px; align-items: end; }
+    .filtros-actions { display: flex; gap: 8px; flex-wrap: wrap; }
     .form-group { display: flex; flex-direction: column; gap: 6px; }
     .form-group-actions { display: flex; flex-direction: column; gap: 6px; }
     label { font-size: 11px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; font-family: var(--font-mono); }
@@ -468,7 +469,29 @@ const productosJSON = JSON.stringify(productos);
         .filtros-grid { grid-template-columns: 1fr 1fr 1fr; }
         .charts-grid { grid-template-columns: 1fr; }
     }
-    @media (max-width: 700px) {
+    @media (max-width: 900px) {
         .filtros-grid { grid-template-columns: 1fr 1fr; }
+        .form-group-actions { grid-column: 1 / -1; }
+    }
+    @media (max-width: 700px) {
+        .actions-header-group {
+            width: 100%;
+            justify-content: stretch;
+        }
+        .actions-header-group .btn {
+            flex: 1 1 140px;
+            justify-content: center;
+        }
+        .filtros-card {
+            padding: 14px;
+        }
+        .filtros-grid { grid-template-columns: 1fr; }
+        .filtros-actions .btn {
+            flex: 1;
+            justify-content: center;
+        }
+        .chart-container-tall {
+            height: 240px;
+        }
     }
 </style>

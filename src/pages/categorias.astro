@@ -202,12 +202,25 @@ const categoriasJSON = JSON.stringify(categorias);
 
 <style>
     .id-badge { font-family: var(--font-mono), monospace; font-size: 12px; color: var(--text-muted); }
-    .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 200; }
-    .modal-box { background: white; border-radius: var(--radius); width: 90%; max-width: 440px; padding: 28px; }
+    .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 200; padding: 12px; }
+    .modal-box { background: white; border-radius: var(--radius); width: 90%; max-width: 440px; padding: 28px; max-height: calc(100vh - 24px); overflow-y: auto; }
     .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }
     .modal-title { font-family: var(--font-mono), monospace; font-size: 16px; font-weight: 700; }
     .form { display: flex; flex-direction: column; gap: 16px; }
     label { font-size: 13px; font-weight: 500; color: var(--text-muted); }
     input, textarea, select { padding: 9px 12px; border: 1px solid var(--border); border-radius: var(--radius); font-family: var(--font-sans), sans-serif; font-size: 14px; }
     .form-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 8px; }
+    @media (max-width: 700px) {
+        .modal-box {
+            width: 100%;
+            padding: 18px;
+        }
+        .form-actions {
+            flex-direction: column-reverse;
+        }
+        .form-actions .btn {
+            width: 100%;
+            justify-content: center;
+        }
+    }
 </style>

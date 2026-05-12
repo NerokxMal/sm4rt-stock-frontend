@@ -250,6 +250,7 @@ if (token && canViewProducts) {
         color: var(--text);
         font-size: 15px;
         line-height: 1.5;
+        min-height: 100vh;
     }
 
     .app {
@@ -393,6 +394,8 @@ if (token && canViewProducts) {
         display: flex;
         justify-content: space-between;
         align-items: center;
+        gap: 12px;
+        flex-wrap: wrap;
         border-bottom: 1px solid var(--border);
         position: sticky;
         top: 0;
@@ -410,11 +413,14 @@ if (token && canViewProducts) {
         display: flex;
         gap: 10px;
         align-items: center;
+        flex-wrap: wrap;
+        max-width: 100%;
     }
 
     .search-box {
         position: relative;
         width: min(420px, 48vw);
+        min-width: 200px;
     }
 
     .search-box input {
@@ -484,6 +490,7 @@ if (token && canViewProducts) {
     .page-content {
         padding: 32px;
         flex: 1;
+        min-width: 0;
     }
 
     .btn {
@@ -561,7 +568,9 @@ if (token && canViewProducts) {
         background: white;
         border-radius: var(--radius);
         border: 1px solid var(--border);
-        overflow: hidden;
+        overflow-x: auto;
+        overflow-y: hidden;
+        -webkit-overflow-scrolling: touch;
     }
 
     table {
@@ -664,14 +673,24 @@ if (token && canViewProducts) {
     .stock-low  { color: var(--primary); font-weight: 600; }
 
     @media (max-width: 900px) {
+        .page-header {
+            padding: 16px 20px;
+            align-items: flex-start;
+        }
+
+        .page-title {
+            font-size: 18px;
+        }
+
         .header-actions {
             width: 100%;
-            justify-content: flex-end;
+            justify-content: stretch;
         }
 
         .search-box {
             width: 100%;
-            max-width: 360px;
+            max-width: none;
+            min-width: 0;
         }
     }
 
@@ -681,16 +700,65 @@ if (token && canViewProducts) {
             height: auto;
             position: relative;
             flex-direction: row;
-            padding: 12px 16px;
+            padding: 10px 12px;
             align-items: center;
         }
 
-        .logo { margin-bottom: 0; margin-right: 20px; }
-        .nav  { flex-direction: row; gap: 4px; flex-wrap: wrap; }
+        .logo { margin-bottom: 0; margin-right: 12px; }
+
+        .logo-main {
+            font-size: 16px;
+        }
+
+        .logo-sub {
+            letter-spacing: 1px;
+        }
+
+        .nav  {
+            flex-direction: row;
+            gap: 6px;
+            flex-wrap: nowrap;
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+        }
+
+        .nav-link {
+            white-space: nowrap;
+            padding: 8px 10px;
+            font-size: 13px;
+        }
+
+        .critical-badge {
+            min-width: 18px;
+            height: 18px;
+            font-size: 10px;
+        }
+
         .sidebar-footer { display: none; }
 
         .main { margin-left: 0; }
 
-        .page-content { padding: 16px; }
+        .page-header {
+            padding: 14px 12px;
+            position: static;
+        }
+
+        .page-content { padding: 14px 12px; }
+
+        .cards-grid {
+            gap: 12px;
+        }
+
+        .card {
+            padding: 16px;
+        }
+
+        .card-value {
+            font-size: 28px;
+        }
+
+        th, td {
+            padding: 10px 12px;
+        }
     }
 </style>

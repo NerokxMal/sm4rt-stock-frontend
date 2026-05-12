@@ -169,8 +169,8 @@ const API_URL = import.meta.env.PUBLIC_API_URL ?? 'http://localhost:8080';
 
     body {
         font-family: var(--font-sans);
-        height: 100vh;
-        overflow: hidden;
+        min-height: 100vh;
+        overflow: auto;
     }
 
     /* ─── LAYOUT DOS PANELES ──────────────────────────────────── */
@@ -178,7 +178,7 @@ const API_URL = import.meta.env.PUBLIC_API_URL ?? 'http://localhost:8080';
     .login-page {
         display: grid;
         grid-template-columns: 1fr 1fr; /* dos columnas iguales */
-        height: 100vh;
+        min-height: 100vh;
     }
 
     /* ─── PANEL IZQUIERDO ─────────────────────────────────────── */
@@ -385,6 +385,12 @@ const API_URL = import.meta.env.PUBLIC_API_URL ?? 'http://localhost:8080';
     @media (max-width: 768px) {
         .login-page { grid-template-columns: 1fr; }
         .brand-panel { display: none; } /* ocultamos el branding en móvil */
-        .form-panel { padding: 32px 24px; }
+        .form-panel {
+            padding: 24px 16px;
+            align-items: flex-start;
+        }
+        .form-container {
+            max-width: 420px;
+        }
     }
 </style>

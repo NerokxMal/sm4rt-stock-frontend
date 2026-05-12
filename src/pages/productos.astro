@@ -203,12 +203,12 @@ const categoriasJSON = JSON.stringify(categorias);
 
 {canViewHistory && (
 <div id="modal-historial" class="modal-overlay" style="display:none;">
-    <div class="modal-box" style="max-width:700px;">
+    <div class="modal-box modal-box-wide">
         <div class="modal-header">
             <h2 id="historial-title" class="modal-title">Historial</h2>
             <button id="historial-close" class="modal-close" type="button">✕</button>
         </div>
-        <div id="historial-content" style="max-height:450px; overflow-y:auto; border-top: 1px solid var(--border)"></div>
+        <div id="historial-content" class="historial-content"></div>
     </div>
 </div>
 )}
@@ -446,19 +446,21 @@ const categoriasJSON = JSON.stringify(categorias);
                 }).join('');
 
                 contentElem.innerHTML = `
-                    <table style="width:100%; border-collapse:collapse">
-                        <thead style="background:#f9f9f9; position:sticky; top:0">
-                            <tr>
-                                <th style="padding:10px 16px; text-align:left; font-size:11px; color:#888">FECHA</th>
-                                <th style="padding:10px 16px; text-align:left; font-size:11px; color:#888">TIPO</th>
-                                <th style="padding:10px 16px; text-align:left; font-size:11px; color:#888">CANTIDAD</th>
-                                <th style="padding:10px 16px; text-align:left; font-size:11px; color:#888">STOCK</th>
-                                <th style="padding:10px 16px; text-align:left; font-size:11px; color:#888">MOTIVO</th>
-                                <th style="padding:10px 16px; text-align:left; font-size:11px; color:#888">USUARIO</th>
-                            </tr>
-                        </thead>
-                        <tbody>${rows}</tbody>
-                    </table>`;
+                    <div class="historial-table-wrap">
+                        <table style="width:100%; border-collapse:collapse; min-width:640px;">
+                            <thead style="background:#f9f9f9; position:sticky; top:0">
+                                <tr>
+                                    <th style="padding:10px 16px; text-align:left; font-size:11px; color:#888">FECHA</th>
+                                    <th style="padding:10px 16px; text-align:left; font-size:11px; color:#888">TIPO</th>
+                                    <th style="padding:10px 16px; text-align:left; font-size:11px; color:#888">CANTIDAD</th>
+                                    <th style="padding:10px 16px; text-align:left; font-size:11px; color:#888">STOCK</th>
+                                    <th style="padding:10px 16px; text-align:left; font-size:11px; color:#888">MOTIVO</th>
+                                    <th style="padding:10px 16px; text-align:left; font-size:11px; color:#888">USUARIO</th>
+                                </tr>
+                            </thead>
+                            <tbody>${rows}</tbody>
+                        </table>
+                    </div>`;
             } catch (err) {
                 contentElem.innerHTML = '<p style="padding:24px; color:var(--primary)">Error al cargar el historial.</p>';
             }
@@ -472,6 +474,7 @@ const categoriasJSON = JSON.stringify(categorias);
         align-items: center;
         gap: 8px;
         flex-wrap: wrap;
+        justify-content: flex-end;
     }
     .btn-historial { background: transparent; border: 1px solid var(--border); color: var(--text-muted); }
     .btn-historial:hover { background: #f5f5f5; border-color: #ccc; }
@@ -481,10 +484,13 @@ const categoriasJSON = JSON.stringify(categorias);
     .desc { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
     .mono { font-family: var(--font-mono), monospace; font-size: 13px; }
     .muted { color: var(--text-muted); }
-    .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 200; }
-    .modal-box { background: white; border-radius: var(--radius); width: 90%; max-width: 520px; padding: 28px; }
+    .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 200; padding: 12px; }
+    .modal-box { background: white; border-radius: var(--radius); width: 90%; max-width: 520px; padding: 28px; max-height: calc(100vh - 24px); overflow-y: auto; }
+    .modal-box-wide { max-width: 700px; }
     .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }
     .modal-title { font-family: var(--font-mono), monospace; font-size: 16px; font-weight: 700; }
+    .historial-content { max-height: 450px; overflow-y: auto; border-top: 1px solid var(--border); }
+    .historial-table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
     .form { display: flex; flex-direction: column; gap: 16px; }
     .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
     .form-group { display: flex; flex-direction: column; gap: 6px; }
@@ -493,5 +499,24 @@ const categoriasJSON = JSON.stringify(categorias);
     .form-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 8px; }
     @media (max-width: 760px) {
         .form-row { grid-template-columns: 1fr; }
+        .actions-header-group {
+            width: 100%;
+            justify-content: stretch;
+        }
+        .actions-header-group .btn {
+            flex: 1 1 calc(50% - 4px);
+            justify-content: center;
+        }
+        .modal-box {
+            width: 100%;
+            padding: 18px;
+        }
+        .form-actions {
+            flex-direction: column-reverse;
+        }
+        .form-actions .btn {
+            width: 100%;
+            justify-content: center;
+        }
     }
 </style>
